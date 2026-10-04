@@ -1,0 +1,76 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Ruby 4.0 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, ubuntu-26.04-arm, macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: "4.0"
+          rustup-toolchain: "1.99.0"
+          bundler-cache: true
+          cargo-cache: true
+      - run: bundle exec rake
+        env:
+          COVERAGE: "true"
+      - run: bundle exec rake package:build package:verify
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('coverage/coverage.lcov') != '' }}
+        with:
+          name: coverage-ruby-${{ matrix.os }}
+          path: coverage/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Upload Ruby coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-26.04' && hashFiles('coverage/coverage.lcov') != '' }}
+        with:
+          files: coverage/coverage.lcov
+          disable_search: true
+          flags: ruby
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  mutation:
+    name: Ruby mutation coverage 100%
+    runs-on: ubuntu-26.04
+    env:
+      BUNDLE_WITH: mutation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: "4.0"
+          rustup-toolchain: "1.99.0"
+          bundler-cache: true
+          cargo-cache: true
+      - run: bundle exec rake mutation
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('tmp/mutation.json') != '' }}
+        with:
+          name: mutation-ruby
+          path: tmp/mutation.json
+          if-no-files-found: error

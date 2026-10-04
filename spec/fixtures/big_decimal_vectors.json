@@ -1,0 +1,23 @@
+{
+  "producer": "Apache Avro Java 1.12.2 BigDecimalConversion",
+  "vectors": [
+    {"name":"zero","value":"0","coefficient":"0","scale":0,"wire_hex":"06020000","canonical_coefficient":"0","canonical_scale":0,"canonical_wire_hex":"06020000"},
+    {"name":"scaled_zero","value":"0.0000","coefficient":"0","scale":4,"wire_hex":"06020008","canonical_coefficient":"0","canonical_scale":0,"canonical_wire_hex":"06020000"},
+    {"name":"one","value":"1","coefficient":"1","scale":0,"wire_hex":"06020100","canonical_coefficient":"1","canonical_scale":0,"canonical_wire_hex":"06020100"},
+    {"name":"negative_one","value":"-1","coefficient":"-1","scale":0,"wire_hex":"0602ff00","canonical_coefficient":"-1","canonical_scale":0,"canonical_wire_hex":"0602ff00"},
+    {"name":"positive_127","value":"127","coefficient":"127","scale":0,"wire_hex":"06027f00","canonical_coefficient":"127","canonical_scale":0,"canonical_wire_hex":"06027f00"},
+    {"name":"positive_128","value":"128","coefficient":"128","scale":0,"wire_hex":"0804008000","canonical_coefficient":"128","canonical_scale":0,"canonical_wire_hex":"0804008000"},
+    {"name":"negative_128","value":"-128","coefficient":"-128","scale":0,"wire_hex":"06028000","canonical_coefficient":"-128","canonical_scale":0,"canonical_wire_hex":"06028000"},
+    {"name":"negative_129","value":"-129","coefficient":"-129","scale":0,"wire_hex":"0804ff7f00","canonical_coefficient":"-129","canonical_scale":0,"canonical_wire_hex":"0804ff7f00"},
+    {"name":"negative_scale","value":"1.23E+8","coefficient":"123","scale":-6,"wire_hex":"06027b0b","canonical_coefficient":"123","canonical_scale":-6,"canonical_wire_hex":"06027b0b"},
+    {"name":"fractional","value":"0.0000123456789","coefficient":"123456789","scale":13,"wire_hex":"0c08075bcd151a","canonical_coefficient":"123456789","canonical_scale":13,"canonical_wire_hex":"0c08075bcd151a"},
+    {"name":"trailing_zeros","value":"1.2300","coefficient":"12300","scale":4,"wire_hex":"0804300c08","canonical_coefficient":"123","canonical_scale":2,"canonical_wire_hex":"06027b04"},
+    {"name":"integer_zeros","value":"1200","coefficient":"1200","scale":0,"wire_hex":"080404b000","canonical_coefficient":"12","canonical_scale":-2,"canonical_wire_hex":"06020c03"},
+    {"name":"large_precision","value":"123456789012345678901234567890.123456789012345678901234567890","coefficient":"123456789012345678901234567890123456789012345678901234567890","scale":30,"wire_hex":"363213aaf504e4bc1e62173f87a4378c37b49c8ccff196ce3f0ad23c","canonical_coefficient":"12345678901234567890123456789012345678901234567890123456789","canonical_scale":29,"canonical_wire_hex":"363201f77ee6e3ac697035865a5d38c138c542dae19828ae3981153a"},
+    {"name":"negative_precision","value":"-987654321098765432109876543210987654321.9876543210987654321","coefficient":"-9876543210987654321098765432109876543219876543210987654321","scale":19,"wire_hex":"3632fe6d3413d914a9abf3b7827b26859178d79db5f054e2e0f34f26","canonical_coefficient":"-9876543210987654321098765432109876543219876543210987654321","canonical_scale":19,"canonical_wire_hex":"3632fe6d3413d914a9abf3b7827b26859178d79db5f054e2e0f34f26"},
+    {"name":"huge_magnitude","value":"1.23E+1000002","coefficient":"123","scale":-1000000,"wire_hex":"0a027bff887a","canonical_coefficient":"123","canonical_scale":-1000000,"canonical_wire_hex":"0a027bff887a"},
+    {"name":"tiny_magnitude","value":"-9.87654321E-999992","coefficient":"-987654321","scale":1000000,"wire_hex":"1008c521974f80897a","canonical_coefficient":"-987654321","canonical_scale":1000000,"canonical_wire_hex":"1008c521974f80897a"},
+    {"name":"maximum_java_scale","value":"1E-2147483647","coefficient":"1","scale":2147483647,"wire_hex":"0e0201feffffff0f","canonical_coefficient":"1","canonical_scale":2147483647,"canonical_wire_hex":"0e0201feffffff0f"},
+    {"name":"minimum_java_scale","value":"1E+2147483648","coefficient":"1","scale":-2147483648,"wire_hex":"0e0201ffffffff0f","canonical_coefficient":"1","canonical_scale":-2147483648,"canonical_wire_hex":"0e0201ffffffff0f"}
+  ]
+}

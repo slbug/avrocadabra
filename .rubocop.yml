@@ -1,0 +1,77 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-rspec
+
+inherit_mode:
+  merge:
+    - Exclude
+
+AllCops:
+  TargetRubyVersion: 4.0
+  ParserEngine: parser_prism
+  UseProjectIndex: true
+  NewCops: enable
+  Exclude:
+    - "target/**/*"
+    - "tmp/**/*"
+    - "vendor/**/*"
+    - "pkg/**/*"
+
+Style/Documentation:
+  Enabled: false
+
+Style/ReturnNil:
+  Enabled: true
+  EnforcedStyle: return
+
+Style/ClassMethodsDefinitions:
+  EnforcedStyle: self_class
+
+Style/ItBlockParameter:
+  Enabled: true
+  EnforcedStyle: allow_single_line
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Metrics/AbcSize:
+  Max: 30
+  Exclude:
+    - "spec/**/*"
+
+Metrics/ClassLength:
+  Max: 220
+
+Metrics/ModuleLength:
+  Max: 130
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+  Exclude:
+    - "spec/**/*"
+
+Metrics/MethodLength:
+  Max: 25
+  Exclude:
+    - "spec/**/*"
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
+
+RSpec/ExampleLength:
+  Max: 20
+
+RSpec/MultipleExpectations:
+  Max: 8
+
+RSpec/Output:
+  Exclude:
+    - "spec/fixtures/**/*.rb"

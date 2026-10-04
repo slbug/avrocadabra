@@ -1,0 +1,29 @@
+[package]
+name = "avrocadabra"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99"
+authors = ["Alexander Grebennik <sl.bug.sl@gmail.com>"]
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+apache-avro = { version = "*", default-features = false }
+magnus = { version = "*", features = ["rb-sys"] }
+num-bigint = "*"
+num-traits = "*"
+ouroboros = "*"
+rb-sys = { version = "*", features = ["stable-api-compiled-fallback"] }
+serde = "*"
+serde_json = { version = "*", features = ["preserve_order"] }
+uuid = "*"
+
+[build-dependencies]
+rb-sys-env = "*"
+
+[lints.rust]
+deprecated = "deny"
+raw_borrows_via_references = "warn"

@@ -1,0 +1,22 @@
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/
+*.bundle
+*.so
+*.o
+*.a
+*.dll
+*.dylib
+mkmf.log
+target/
+/ext/**/Makefile
+/ext/**/Cargo.lock
+
+# rspec failure tracking
+.rspec_status
+.mutineer/

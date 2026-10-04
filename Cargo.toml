@@ -1,0 +1,8 @@
+[workspace]
+members = ["ext/avrocadabra"]
+resolver = "3"
+
+[profile.release]
+lto = "thin"
+# Rust's strip path misaligns Mach-O string tables on macOS 27 (rust-lang/rust#157750).
+strip = "none"
