@@ -29,6 +29,11 @@ require "rbconfig"
 require "support/avro_helpers"
 
 RSpec.configure do |config|
+  if (report = ENV.fetch("JUNIT_REPORT", nil))
+    require "rspec_junit_formatter"
+    config.add_formatter(RspecJunitFormatter, report)
+  end
+
   config.example_status_persistence_file_path = ".rspec_status"
   config.disable_monkey_patching!
   config.order = :random

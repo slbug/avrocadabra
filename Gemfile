@@ -11,6 +11,7 @@ gem "rackup", require: false
 gem "rake", ">= 13.4"
 gem "rake-compiler", ">= 1.3"
 gem "rspec", ">= 3.13"
+gem "rspec_junit_formatter", ">= 0.6", require: false
 gem "rubocop", ">= 1.87"
 gem "rubocop-performance", ">= 1.26"
 gem "rubocop-rake", ">= 0.7"

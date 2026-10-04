@@ -144,9 +144,8 @@ class NativeBuild
     spec.dependencies.reject! { it.name == "rb_sys" }
     spec.files.reject! { it.start_with?("ext/") || it.match?(/\ACargo\.(toml|lock)\z/) }
     spec.required_ruby_version = "~> #{RUBY_VERSION.split(".").first(2).join(".")}.0"
-    spec.required_rubygems_version = ">= 3.3.22"
-    spec.metadata["build_ruby_version"] = RUBY_VERSION
-    spec.metadata["build_toolchains"] = JSON.generate(@tools.versions)
+    spec.metadata = spec.metadata.merge("build_ruby_version" => RUBY_VERSION,
+                                        "build_toolchains" => JSON.generate(@tools.versions))
     spec
   end
 
@@ -160,7 +159,9 @@ class NativeBuild
     end
     spec.files << copy_extension(directory)
     FileUtils.mkdir_p(File.join(@root, "pkg"))
-    Dir.chdir(directory) { Gem::Package.build(spec, false, false, File.join(@root, "pkg", spec.file_name)) }
+    abi = Gem::ContentAddress.ruby_abi_for(spec.required_ruby_version)
+    name = Dir.chdir(directory) { Gem::Package.build(spec, false, false, nil, abi) }
+    FileUtils.cp(File.join(directory, name), File.join(@root, "pkg", name))
   end
 
   def copy_extension(directory)

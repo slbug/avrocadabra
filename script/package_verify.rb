@@ -9,9 +9,9 @@ abort "Usage: ruby script/package_verify.rb pkg/avrocadabra-*.gem" if ARGV.empty
 
 smoke_test = <<~'RUBY'
   require "rubygems"
-  expected_version, expected_platform = ARGV
+  expected_version, expected_platform, expected_address = ARGV
   spec = Gem::Specification.find_all_by_name("avrocadabra", "= #{expected_version}").find do |candidate|
-    candidate.platform.to_s == expected_platform
+    candidate.platform.to_s == expected_platform && candidate.content_address.to_s == expected_address
   end
   abort "Installed package not found" unless spec
   spec.activate
@@ -75,10 +75,15 @@ RUBY
 Bundler.with_unbundled_env do
   ARGV.each do |argument|
     package = File.expand_path(argument)
-    spec = Gem::Package.new(package).spec
+    archive = Gem::Package.new(package)
+    spec = archive.spec
     raise "Unexpected package: #{spec.name}" unless spec.name == "avrocadabra"
 
     unless spec.platform == Gem::Platform::RUBY
+      raise "Native package is not content-addressable" unless archive.content_address
+      if spec.required_rubygems_version.satisfied_by?(Gem::Version.new("4.0.99"))
+        raise "Native package permits old RubyGems"
+      end
       raise "Native package declares a build step" unless spec.extensions.empty?
       raise "Native package depends on rb_sys" if spec.dependencies.any? { it.name == "rb_sys" }
       raise "Native package contains Rust sources" if spec.files.any? { it.end_with?(".rs") }
@@ -87,7 +92,8 @@ Bundler.with_unbundled_env do
     Dir.mktmpdir("avrocadabra-package-") do |directory|
       platform = spec.platform == Gem::Platform::RUBY ? ["--platform", "ruby"] : []
       system(Gem.ruby, "-S", "gem", "install", package, "--no-document", *platform, chdir: directory, exception: true)
-      system(Gem.ruby, "-e", smoke_test, spec.version.to_s, spec.platform.to_s, chdir: directory, exception: true)
+      system(Gem.ruby, "-e", smoke_test, spec.version.to_s, spec.platform.to_s, archive.content_address.to_s,
+             chdir: directory, exception: true)
     end
   end
 end
