@@ -23,7 +23,7 @@ Gates: 95% Ruby line/branch coverage; 100% Mutineer score. CI uploads LCOV cover
 macOS, Xcode Command Line Tools, Ruby 4.0, RubyGems 4.1+ (prereleases supported) and Rust 1.99. Install missing tools:
 
 ```sh
-gem update --system --pre --no-document
+gem update --system 4.1.0.beta1 --no-document
 brew install zig cargo-zigbuild mingw-w64 rustup
 rustup target add aarch64-apple-darwin x86_64-apple-darwin \
   x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
