@@ -3,21 +3,34 @@
 
 require "bundler"
 require "rubygems/package"
-require_relative "../lib/avrocadabra/version"
 
 target = ARGV.shift
 abort "Unknown publish target: #{target}" unless %w[coop rubygems all].include?(target)
 abort "Usage: ruby script/package_publish.rb TARGET PLATFORM..." if ARGV.empty?
 
 root = File.expand_path("..", __dir__)
+release = Gem::Specification.load(File.join(root, "avrocadabra.gemspec"))
+abi = RUBY_VERSION.split(".").first(2).join(".")
+native = Dir[File.join(root, "pkg", "#{release.name}-#{release.version}-*.gem")]
+         .sort_by { File.mtime(it) }.filter_map do |path|
+  package = Gem::Package.new(path)
+  spec = package.spec
+  next unless Gem::ContentAddress.ruby_abi_for(spec.required_ruby_version) == abi && package.content_address
+
+  [spec.platform.to_s, path]
+end.to_h
 dry_run = ENV["DRY_RUN"] == "1"
 platforms = ["ruby", *ARGV]
 packages = platforms.map do |platform|
-  suffix = platform == "ruby" ? "" : "-#{platform}"
-  path = File.join(root, "pkg", "avrocadabra-#{Avrocadabra::VERSION}#{suffix}.gem")
+  path = if platform == "ruby"
+           File.join(root, "pkg", release.file_name)
+         else
+           native.fetch(platform) { abort "Missing #{platform}; run bundle exec rake build" }
+         end
   abort "Missing #{path}; run bundle exec rake build" unless File.file?(path)
-  spec = Gem::Package.new(path).spec
-  unless spec.name == "avrocadabra" && spec.version.to_s == Avrocadabra::VERSION && spec.platform.to_s == platform
+  package = Gem::Package.new(path)
+  spec = package.spec
+  unless spec.name == release.name && spec.version == release.version && spec.platform.to_s == platform
     abort "Unexpected package metadata: #{path}"
   end
   path

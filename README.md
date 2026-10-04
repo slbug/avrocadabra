@@ -113,7 +113,7 @@ Ractor.new(schema) { |codec| codec.decode(codec.encode(42)) }.value # => 42
 
 ## Build
 
-Binary gems need no compiler. Source builds need Rust 1.99+, Cargo, a C toolchain, libclang and Ruby headers. Runtime dependencies: `json`, `bigdecimal`, `date`, `zeitwerk`; source builds add `rb_sys`. The optional integration needs `avro` and `avro_turf`.
+Binary gems need RubyGems 4.1+ (prereleases supported) and no compiler. Source builds need Rust 1.99+, Cargo, a C toolchain, libclang and Ruby headers. Runtime dependencies: `json`, `bigdecimal`, `date`, `zeitwerk`; source builds add `rb_sys`. The optional integration needs `avro` and `avro_turf`.
 
 ```sh
 bundle install
@@ -124,7 +124,7 @@ bundle exec ruby benchmark/codec.rb
 bundle exec rake build package:verify
 ```
 
-CI gates: Ruby line/branch coverage ≥95%, Mutineer score 100%. Reports: HTML/LCOV artifacts + Codecov. Rust has unit, interoperability and fuzz tests.
+CI gates: Ruby line/branch coverage ≥95%, Mutineer score 100%. Reports: HTML/LCOV coverage and JUnit test results; coverage and test results go to Codecov. Rust has unit, interoperability and fuzz tests.
 
 `rake build` builds source + seven native gems locally on macOS with the running Ruby release. `package:verify` installs and tests source/current-platform gems outside the checkout. Build tools, targets and manual publishing: [releases](docs/releasing.md).
 

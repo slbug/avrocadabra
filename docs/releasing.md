@@ -4,25 +4,26 @@ Manual publishing only. CI runs specs, lint, coverage, mutation and host package
 
 ## Check
 
-Update `lib/avrocadabra/version.rb`, `ext/avrocadabra/Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`.
+Update `lib/avrocadabra/version.rb`, `ext/avrocadabra/Cargo.toml`, both lockfiles and `CHANGELOG.md`.
 
 ```sh
 bundle install
 bundle exec rake package:licenses
-COVERAGE=true bundle exec rake
+COVERAGE=true JUNIT_REPORT=spec/reports/rspec.xml bundle exec rake
 BUNDLE_WITH=mutation bundle install
 BUNDLE_WITH=mutation bundle exec rake mutation
 bundle exec ruby benchmark/codec.rb
 bundle exec ruby benchmark/messaging.rb
 ```
 
-Gates: 95% Ruby line/branch coverage; 100% Mutineer score. Reports: CI artifacts and Codecov. Refresh compiler notices in `docs/licenses/` when upgrading release compilers.
+Gates: 95% Ruby line/branch coverage; 100% Mutineer score. CI uploads LCOV coverage and JUnit test results to Codecov. Refresh compiler notices in `docs/licenses/` when upgrading release compilers.
 
 ## Prerequisites
 
-macOS, Xcode Command Line Tools, Ruby 4.0 and Rust 1.99. Install missing tools:
+macOS, Xcode Command Line Tools, Ruby 4.0, RubyGems 4.1+ (prereleases supported) and Rust 1.99. Install missing tools:
 
 ```sh
+gem update --system 4.1.0.beta1 --no-document
 brew install zig cargo-zigbuild mingw-w64 rustup
 rustup target add aarch64-apple-darwin x86_64-apple-darwin \
   x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
@@ -40,6 +41,8 @@ bundle exec rake build:source
 ```
 
 `build`: source gem + seven binaries in `pkg/`, using the running Ruby release and installed compilers. Target builds are cached in `tmp/native/`. No Docker.
+
+RubyGems generates native filenames as `avrocadabra-VERSION-SHA256.gem` (eight hash characters) and requires installer version `4.1.0.a` or newer. Publish and verify select the newest artifact per platform for the running Ruby ABI. Previous artifacts stay on disk.
 
 | Gem platform | Runtime |
 | --- | --- |

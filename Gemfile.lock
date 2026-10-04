@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    avrocadabra (0.0.1)
+    avrocadabra (0.0.2)
       bigdecimal (>= 3.1)
       date (>= 3.4)
       json (>= 2.9)
@@ -79,6 +79,8 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.13.0)
     rspec-support (3.13.7)
+    rspec_junit_formatter (0.6.0)
+      rspec-core (>= 2, < 4, != 2.12.0)
     rubocop (1.91.0)
       json (>= 2.3)
       language_server-protocol (~> 3.17.0.2)
@@ -140,6 +142,7 @@ DEPENDENCIES
   rake (>= 13.4)
   rake-compiler (>= 1.3)
   rspec (>= 3.13)
+  rspec_junit_formatter (>= 0.6)
   rubocop (>= 1.87)
   rubocop-performance (>= 1.26)
   rubocop-rake (>= 0.7)
@@ -153,7 +156,7 @@ CHECKSUMS
   ast (2.4.3) sha256=954615157c1d6a382bc27d690d973195e79db7f55e9765ac7c481c60bdb4d383
   avro (1.12.2) sha256=e201ac113ed7dcac6f14987424bc2177f72c367e46428331dc93d9d9cd186ac0
   avro_turf (1.20.2) sha256=2bc1e8fa549cdf818433e0a2c727aa1548d24f6af245e64a229c6e618b0f51fc
-  avrocadabra (0.0.1)
+  avrocadabra (0.0.2)
   bigdecimal (4.1.3) sha256=61ebe1e5e559bdc3cc6f2c0ee7f427321fc838f59611c294356eb04d6e21cf66
   bundler (4.1.0.beta1) sha256=8a2dac8ca276ff4eff5efc2c6457b0044080fc1e431534ad7c5cc6187232b800
   date (3.5.1) sha256=750d06384d7b9c15d562c76291407d89e368dda4d4fff957eb94962d325a0dc0
@@ -190,6 +193,7 @@ CHECKSUMS
   rspec-expectations (3.13.5) sha256=33a4d3a1d95060aea4c94e9f237030a8f9eae5615e9bd85718fe3a09e4b58836
   rspec-mocks (3.13.8) sha256=086ad3d3d17533f4237643de0b5c42f04b66348c28bf6b9c2d3f4a3b01af1d47
   rspec-support (3.13.7) sha256=0640e5570872aafefd79867901deeeeb40b0c9875a36b983d85f54fb7381c47c
+  rspec_junit_formatter (0.6.0) sha256=40dde674e6ae4e6cc0ff560da25497677e34fefd2338cc467a8972f602b62b15
   rubocop (1.91.0) sha256=9c82b7bf391c5d7e3798c5b9996e22a1fe3bd7468e351dfdeb96140c058296d0
   rubocop-ast (1.50.0) sha256=b9ca88300da0803ee222ad20cdb30494c0a784eed06fdc35d254b06d662788db
   rubocop-performance (1.27.0) sha256=eeeb1374d062a368ee1c787b70eb0b0cc4b184cb1f8565f424760946146d61ce

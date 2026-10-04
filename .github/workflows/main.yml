@@ -35,9 +35,11 @@ jobs:
           bundler-cache: true
           cargo-cache: true
           cargo-cache-clean: false
+      - run: gem update --system 4.1.0.beta1 --no-document
       - run: bundle exec rake
         env:
           COVERAGE: "true"
+          JUNIT_REPORT: spec/reports/rspec.xml
       - run: bundle exec rake package:build package:verify
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() && hashFiles('coverage/coverage.lcov') != '' }}
@@ -54,6 +56,22 @@ jobs:
           files: coverage/coverage.lcov
           disable_search: true
           flags: ruby
+          fail_ci_if_error: true
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('spec/reports/rspec.xml') != '' }}
+        with:
+          name: tests-ruby-${{ matrix.os }}
+          path: spec/reports/rspec.xml
+          if-no-files-found: error
+      - name: Upload Ruby test results to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        if: ${{ !cancelled() && hashFiles('spec/reports/rspec.xml') != '' }}
+        with:
+          use_oidc: true
+          report_type: test_results
+          files: spec/reports/rspec.xml
+          disable_search: true
+          flags: ruby-${{ matrix.os }}
           fail_ci_if_error: true
 
   mutation:

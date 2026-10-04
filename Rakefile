@@ -17,7 +17,7 @@ RuboCop::RakeTask.new
 GEMSPEC = Gem::Specification.load("avrocadabra.gemspec")
 NATIVE_TARGETS = NativeBuild::TARGETS.keys.freeze
 
-Rake::Task[:build].clear
+Rake::Task[:build].enhance(["build:native"])
 
 namespace :build do
   desc "Build the source gem"
@@ -33,9 +33,6 @@ namespace :build do
   end
 end
 
-desc "Build the source gem and all seven native gems locally on macOS"
-task build: %w[build:source build:native]
-
 desc "Publish release gems: publish[coop|rubygems|all]; DRY_RUN=1 lists commands"
 task :publish, [:target] do |_, args|
   target = args[:target] || "all"
@@ -48,16 +45,17 @@ end
   Rake::Task[name].clear_prerequisites.enhance(["build:source"])
 end
 
+native_specs = []
 RbSys::ExtensionTask.new("avrocadabra", GEMSPEC) do |ext|
   ext.lib_dir = "lib/avrocadabra"
   ext.cross_compiling do |spec|
-    spec.required_ruby_version = "~> 4.0.0"
-    spec.required_rubygems_version = ">= 3.3.22"
+    spec.required_ruby_version = "~> #{RUBY_VERSION.split(".").first(2).join(".")}.0"
     spec.files.reject! { it.start_with?("ext/") }
     if spec.platform.os == "linux" && spec.platform.version.nil?
       spec.platform = Gem::Platform.new([spec.platform.cpu, "linux", "gnu"])
     end
     spec.original_platform = spec.platform.to_s
+    native_specs << spec
   end
 end
 
@@ -94,25 +92,31 @@ namespace :package do
   task(:licenses_check) { ruby "script/package_licenses.rb", "--check" }
 
   desc "Build the source gem and the current platform's native gem"
-  task :build do
-    Rake::Task["package:licenses_check"].invoke
-    Rake::Task["build:source"].invoke
-    Rake::Task["native"].invoke
-    Rake::Task["gem"].invoke
-  end
-
-  desc "Install built gems and verify them outside the checkout"
-  task :verify do
-    source = "pkg/#{GEMSPEC.name}-#{GEMSPEC.version}.gem"
-    abort "Missing #{source}; run bundle exec rake build:source" unless File.file?(source)
-    candidates = Dir["pkg/#{GEMSPEC.name}-*.gem"].select do |package|
-      spec = Gem::Package.new(package).spec
-      spec.name == GEMSPEC.name && spec.version == GEMSPEC.version &&
-        spec.platform != Gem::Platform::RUBY && Gem::Platform.match_spec?(spec)
+  task build: ["build:source", :native] do
+    native_specs.each do |spec|
+      directory = "pkg/#{spec.full_name}"
+      Rake::Task[directory].invoke
+      abi = Gem::ContentAddress.ruby_abi_for(spec.required_ruby_version)
+      name = Dir.chdir(directory) { Gem::Package.build(spec, false, false, nil, abi) }
+      FileUtils.cp(File.join(directory, name), File.join("pkg", name))
     end
-    native = candidates.max_by { File.mtime(it) }
-    ruby "script/package_verify.rb", *[source, native].compact
   end
+end
+
+desc "Install built gems and verify them outside the checkout"
+task "package:verify" do
+  source = "pkg/#{GEMSPEC.name}-#{GEMSPEC.version}.gem"
+  abort "Missing #{source}; run bundle exec rake build:source" unless File.file?(source)
+  abi = RUBY_VERSION.split(".").first(2).join(".")
+  candidates = Dir["pkg/#{GEMSPEC.name}-#{GEMSPEC.version}-*.gem"].select do |path|
+    package = Gem::Package.new(path)
+    spec = package.spec
+    Gem::ContentAddress.ruby_abi_for(spec.required_ruby_version) == abi &&
+      Gem::Platform.match_spec?(spec) && package.content_address
+  end
+  native = candidates.max_by { File.mtime(it) }
+  abort "Missing current-platform native gem; run bundle exec rake package:build" unless native
+  ruby "script/package_verify.rb", source, native
 end
 
 task default: %i[spec rubocop rust:test rust:fmt rust:clippy package:licenses_check]
