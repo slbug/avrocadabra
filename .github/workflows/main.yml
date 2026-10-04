@@ -17,6 +17,9 @@ jobs:
   test:
     name: Ruby 4.0 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -45,13 +48,13 @@ jobs:
           if-no-files-found: error
       - name: Upload Ruby coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        if: ${{ !cancelled() && matrix.os == 'ubuntu-26.04' && hashFiles('coverage/coverage.lcov') != '' }}
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-26.04' }}
         with:
+          use_oidc: true
           files: coverage/coverage.lcov
           disable_search: true
           flags: ruby
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   mutation:
     name: Ruby mutation coverage 100%
