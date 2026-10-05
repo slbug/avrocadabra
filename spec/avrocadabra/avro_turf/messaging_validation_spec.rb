@@ -2,7 +2,7 @@
 
 require "support/schema_registry"
 
-RSpec.describe Avrocadabra::AvroTurf::Validation do
+RSpec.describe Avrocadabra::AvroTurf::Messaging do
   include_context "with a schema registry"
 
   let(:definition) do
@@ -11,7 +11,7 @@ RSpec.describe Avrocadabra::AvroTurf::Validation do
   end
   let(:options) { { registry: registry, logger: Logger.new(nil) } }
   let(:reference) { AvroTurf::Messaging.new(**options) }
-  let(:native) { Avrocadabra::AvroTurf::Messaging.new(**options) }
+  let(:native) { described_class.new(**options) }
   let(:schema_id) { registry.register("bounded", reference_schema(definition)) }
 
   def rejected_tree(counter)
@@ -50,21 +50,15 @@ RSpec.describe Avrocadabra::AvroTurf::Validation do
     expect(Thread.current[:avrocadabra_codecs]).to be_nil
   end
 
-  it "shares a caller's work budget across branch attempts" do
-    schema = reference_schema(["null", { "type" => "array", "items" => "long" }])
-    mapping = Avrocadabra::AvroTurf::Mapping.new(schema, Avrocadabra::AvroTurf::SchemaState.new(schema).schemas)
-    budget = [4, 10]
-    expect(mapping.union_index(schema, [1, 2], budget)).to eq(1)
-    expect(budget).to eq([0, 10])
-    expect { mapping.union_index(schema, [3], budget) }.to raise_error(Avro::IO::AvroTypeError)
-  end
-
-  it "bounds depth while restoring the caller's depth budget after errors" do
-    schema = reference_schema({ "type" => "array", "items" => { "type" => "array", "items" => "long" } })
-    budget = [100, 1]
-    expect { Avro::Schema.validate(schema, [[1]], avrocadabra_budget: budget) }
-      .to raise_error(Avro::IO::AvroTypeError) { expect(it.cause.message).to include("maximum depth") }
-    expect(budget).to eq([98, 1])
+  it "restores the depth budget after a rejected union branch" do
+    stub_const("Avrocadabra::Schema::MAX_DEPTH", 3)
+    nested = lambda do |name, leaf|
+      record_schema(name, [field("v", { "type" => "array", "items" => { "type" => "array", "items" => leaf } })])
+    end
+    id = registry.register("nested", reference_schema([nested.call("Longs", "long"), nested.call("Texts", "string")]))
+    datum = { "v" => [["x"]] }
+    expect(native.encode(datum, schema_id: id, validate: true))
+      .to eq(reference.encode(datum, schema_id: id, validate: true))
   end
 
   it "accepts values at the native depth limit with validation enabled" do

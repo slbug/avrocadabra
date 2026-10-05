@@ -17,8 +17,6 @@ module Avrocadabra
       end
     end
 
-    Validation = NativeSchema::Budget
-
     ::AvroTurf::Messaging.prepend(Routing)
     ::Avro::IO::DatumWriter.prepend(NativeSchema::Writer)
     ::Avro::IO::DatumReader.prepend(DatumReader)

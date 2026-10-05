@@ -6,7 +6,7 @@
 - Verification is cached per definition epoch. Frozen native hooks on `Module`, ahead of each hooked ancestry's own singleton methods, bump it on definition, removal, visibility, mixin and constant changes. Class-variable and constant-cache counters cover the rest.
 - Union branches are tried natively. A `validate_recursive`-equivalent walk confirms each rejection. Anything observable restarts selection through `Schema.validate`. Every examined branch charges the work budget.
 - Built-in `BytesDecimal` encodes natively, matching bigdecimal's truncated `Float#to_d` digits and dtoa tie rounding while `BigDecimal.limit` is 0. Precision errors replay the adapter in Ruby.
-- `Codec#encode` writes through the same native `DatumWriter`; the adapter-mapped standalone encoder it used is gone. Mappings serve decode only.
+- The adapter-mapped standalone encoder AvroTurf used is gone; mappings serve decode only.
 - Schema mutation checks call readers through generated Ruby instead of C dispatch and compare results by raw identity, so an overridden `equal?` hides nothing. Native schemas follow the `fields` reader, so replaced readers recompile.
 - Ruby objects allocated while Rust owns memory are created under `rb_protect`, typed data is allocated empty before its Rust value is attached, and errors become Ruby exceptions before they leave Rust, so Ruby exceptions never unwind through Rust frames.
 - Messaging encode, 500-entry nested unions: 18.6 ms → 0.51 ms (Ruby AvroTurf 14.7 ms). 500-item flat: 1.11 ms → 0.28 ms. Small: 19 µs → 8 µs.

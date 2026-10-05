@@ -97,7 +97,6 @@ use check::{
 
 static CODECS: LazyId = LazyId::new("avrocadabra_codecs");
 static BUDGET: LazyId = LazyId::new("__avrocadabra_budget");
-static BUDGET_OPTION: LazyId = LazyId::new("avrocadabra_budget");
 static UNION: LazyId = LazyId::new("union");
 static MAX_ITEMS: LazyId = LazyId::new("MAX_ITEMS");
 static MAX_DEPTH: LazyId = LazyId::new("MAX_DEPTH");
@@ -131,10 +130,6 @@ fn thread_local(name: &LazyId) -> VALUE {
 
 fn set_thread_local(name: &LazyId, value: VALUE) {
     unsafe { rb_sys::rb_thread_local_aset(rb_sys::rb_thread_current(), id(name), value) };
-}
-
-pub fn bump() {
-    check::bump();
 }
 
 /// Bumps after `super`, which may encode against the old definitions. A C frame keeps
@@ -191,14 +186,6 @@ fn new_budget(ruby: &Ruby, (items, depth): (i64, i64)) -> Result<RArray, Error> 
     Ok(budget)
 }
 
-fn option_budget(_ruby: &Ruby, options: Option<&Value>) -> Option<RArray> {
-    let options = magnus::RHash::from_value(*options?)?;
-    let key = unsafe { rb_sys::rb_id2sym(id(&BUDGET_OPTION)) };
-    let found = unsafe { rb_sys::rb_hash_lookup2(options.as_raw(), key, rb_sys::Qundef as VALUE) };
-    (found != rb_sys::Qundef as VALUE)
-        .then(|| RArray::from_value(unsafe { Value::from_raw(found) }))?
-}
-
 fn super_call(args: &[Value]) -> Result<Value, Error> {
     let argv: Vec<VALUE> = args.iter().map(|value| value.as_raw()).collect();
     protect(|| unsafe { rb_sys::rb_call_super(argv.len() as _, argv.as_ptr()) })
@@ -218,7 +205,6 @@ fn raise_with_cause(ruby: &Ruby, exception: VALUE, cause: Error) -> Error {
 
 pub fn validate_bang(ruby: &Ruby, _rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let fresh = thread_local(&CODECS) != rb_sys::Qnil as VALUE
-        && option_budget(ruby, args.get(2)).is_none()
         && thread_local(&BUDGET) == rb_sys::Qnil as VALUE;
     if fresh {
         set_thread_local(&BUDGET, new_budget(ruby, limits(ruby)?)?.as_raw());
@@ -243,9 +229,7 @@ pub fn validate_bang(ruby: &Ruby, _rb_self: Value, args: &[Value]) -> Result<Val
 }
 
 pub fn validate_recursive(ruby: &Ruby, _rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let budget = option_budget(ruby, args.get(4))
-        .or_else(|| RArray::from_value(unsafe { Value::from_raw(thread_local(&BUDGET)) }));
-    let Some(budget) = budget else {
+    let Some(budget) = RArray::from_value(unsafe { Value::from_raw(thread_local(&BUDGET)) }) else {
         return super_call(args);
     };
     let schema = args

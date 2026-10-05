@@ -18,6 +18,15 @@ end
 pair = { type: "record", name: "Pair", fields: [{ name: "v", type: %w[null long] }, { name: "second", type: "long" }] }
 stamp = { type: "record", name: "Stamp",
           fields: [{ name: "at", type: { type: "long", logicalType: "timestamp-millis" } }] }
+single = { type: "record", name: "Single", fields: [{ name: "x", type: { type: "fixed", name: "One", size: 1 } }] }
+renamed = { type: "record", name: "Renamed", fields: [{ name: "a", type: "long" }] }
+decimal = { type: "bytes", logicalType: "decimal", precision: 6, scale: 2 }
+renaming = Class.new(Hash) do
+  define_method(:key?) do |key|
+    current[:schema].fields.first.instance_variable_set(:@name, "b")
+    super(key)
+  end
+end
 impostor = Class.new do
   def is_a?(klass) = klass == Hash || super
   def key?(key) = key == "v"
@@ -47,18 +56,36 @@ definition, datum, before, after = {
   "union branches reordered mid-encode" => [pair, { "v" => nil, "second" => 2 }, nil, lambda do
     on_call.call(NilClass, :nil?) { |seen| current[:schema].fields.first.type.schemas.reverse! if seen == 1 }
   end],
-  "hash impostor" => [pair, impostor.new, nil, -> { on_call.call(impostor, :key?) }]
+  "hash impostor" => [pair, impostor.new, nil, -> { on_call.call(impostor, :key?) }],
+  "plan replaced mid-encode" => [single, { "x" => "B" }, nil, lambda do
+    on_call.call(Hash, :key?) do |seen|
+      next unless seen == 1
+
+      current[:schema].fields.first.instance_variable_set(:@type, Avro::Schema.parse('"string"'))
+      current[:nested].call
+      GC.start(full_mark: true, immediate_sweep: true)
+    end
+  end],
+  "field renamed inside key?" => [renamed, renaming.new.update("a" => 1, "b" => 22), nil, nil],
+  "decimal factor changed" => [decimal, BigDecimal("1.5"), nil, lambda do
+    current[:prepare] = ->(schema) { schema.type_adapter.instance_variable_set(:@factor, BigDecimal(1000)) }
+  end]
 }.fetch(kind)
 before&.call
 require "avrocadabra/avro_turf"
 
 cache = Avrocadabra::AvroTurf::Cache.new
+encode = lambda do |value|
+  output = StringIO.new("".b)
+  operation = -> { Avro::IO::DatumWriter.new(current[:schema]).write(value, Avro::IO::BinaryEncoder.new(output)) }
+  engine == "native" ? Avrocadabra::AvroTurf.with_codecs(cache, &operation) : operation.call
+  output.string.unpack1("H*")
+end
+current[:nested] = -> { encode.call({ "x" => "changed" }) }
 write = lambda do
   current[:schema] = Avro::Schema.parse(JSON.generate(definition))
-  output = StringIO.new("".b)
-  encode = -> { Avro::IO::DatumWriter.new(current[:schema]).write(datum, Avro::IO::BinaryEncoder.new(output)) }
-  engine == "native" ? Avrocadabra::AvroTurf.with_codecs(cache, &encode) : encode.call
-  output.string.unpack1("H*")
+  current[:prepare]&.call(current[:schema])
+  encode.call(datum)
 rescue StandardError => e
   "#{e.class}: #{e.message}"
 end

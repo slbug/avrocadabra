@@ -71,11 +71,12 @@ RSpec.describe Avrocadabra::AvroTurf::Cache do
     cache = described_class.new
     first = cache.fetch(schema)
     adapter = Object.new
-    allow(adapter).to receive(:encode).with(2).and_return(7)
+    allow(adapter).to receive(:decode).with(2).and_return(7)
     schema.instance_variable_set(:@type_adapter, adapter)
     replacement = cache.fetch(schema)
     expect(replacement).not_to equal(first)
-    expect(reference_decode("long", replacement.encode(2))).to eq(7)
+    decoder = Avro::IO::BinaryDecoder.new(StringIO.new(reference_encode("long", 2)))
+    expect(replacement.read(decoder, replacement)).to eq(7)
   end
 
   it "reuses a replacement published while another thread checks a stale entry" do

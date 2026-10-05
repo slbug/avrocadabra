@@ -23,7 +23,11 @@ pub enum Logical {
 pub enum Adapter {
     Pending,
     Identity,
-    Decimal { precision: i64, scale: i64 },
+    Decimal {
+        precision: i64,
+        scale: i64,
+        factor: VALUE,
+    },
     Stock(Logical),
     Custom,
 }
@@ -179,7 +183,15 @@ impl Env {
                 ivar(adapter, &IV_FACTOR),
             ];
             if let (Some(precision), Some(scale)) = (fixnum(state[0]), fixnum(state[1])) {
-                return (Adapter::Decimal { precision, scale }, state);
+                let factor = state[2];
+                return (
+                    Adapter::Decimal {
+                        precision,
+                        scale,
+                        factor,
+                    },
+                    state,
+                );
             }
         }
         (Adapter::Custom, [0; 3])
@@ -446,19 +458,24 @@ fn fixnum(value: VALUE) -> Option<i64> {
     rb_sys::FIXNUM_P(value).then(|| unsafe { rb_sys::rb_num2long(value) } as i64)
 }
 
+#[derive(Default)]
+struct Cached {
+    entries: Vec<(VALUE, Arc<Plan>)>,
+    /// Replaced plans an outer encode still walks; Ruby must keep marking them.
+    retired: Vec<Arc<Plan>>,
+}
+
 #[derive(TypedData, Default)]
 #[magnus(class = "Avrocadabra::NativeSchema::Plans", free_immediately, mark)]
 pub struct Plans {
-    entries: Mutex<Vec<(VALUE, Arc<Plan>)>>,
+    cached: Mutex<Cached>,
 }
 
 impl DataTypeFunctions for Plans {
     fn mark(&self, marker: &gc::Marker) {
-        let entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        for (_, plan) in entries.iter() {
+        let cached = self.lock();
+        let plans = cached.entries.iter().map(|entry| &entry.1);
+        for plan in plans.chain(cached.retired.iter()) {
             for value in plan.values() {
                 if !rb_sys::SPECIAL_CONST_P(value) {
                     marker.mark(unsafe { Value::from_raw(value) });
@@ -469,13 +486,17 @@ impl DataTypeFunctions for Plans {
 }
 
 impl Plans {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Cached> {
+        self.cached
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
     pub fn fetch(&self, env: &Env, schema: VALUE) -> Result<Option<Arc<Plan>>, Error> {
         let cached = {
-            let entries = self
+            let cached = self.lock();
+            cached
                 .entries
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            entries
                 .iter()
                 .find(|entry| entry.0 == schema)
                 .map(|entry| entry.1.clone())
@@ -489,19 +510,23 @@ impl Plans {
             return Ok(None);
         };
         let plan = Arc::new(plan);
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        entries.retain(|entry| entry.0 != schema);
-        if entries.len() >= LIMIT
-            && let Some(position) = entries
+        let mut cached = self.lock();
+        cached.retired.retain(|plan| Arc::strong_count(plan) > 1);
+        if let Some(position) = cached.entries.iter().position(|entry| entry.0 == schema) {
+            let (_, replaced) = cached.entries.remove(position);
+            if Arc::strong_count(&replaced) > 1 {
+                cached.retired.push(replaced);
+            }
+        }
+        if cached.entries.len() >= LIMIT
+            && let Some(position) = cached
+                .entries
                 .iter()
                 .position(|entry| Arc::strong_count(&entry.1) == 1)
         {
-            entries.remove(position);
+            cached.entries.remove(position);
         }
-        entries.push((schema, plan.clone()));
+        cached.entries.push((schema, plan.clone()));
         Ok(Some(plan))
     }
 }

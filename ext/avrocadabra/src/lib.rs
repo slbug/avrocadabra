@@ -67,7 +67,6 @@ struct Core {
     limits: Limits,
     fields: HashMap<String, usize>,
     records: HashMap<usize, Vec<usize>>,
-    encoded_size: AtomicUsize,
     memory_size: usize,
     // Plans own no schemas, so reciprocal reader pairs cannot form Arc cycles.
     resolutions: [ResolutionSlot; 8],
@@ -301,7 +300,6 @@ impl Core {
             limits,
             fields,
             records,
-            encoded_size: AtomicUsize::new(0),
             memory_size,
             resolutions: std::array::from_fn(|_| ResolutionSlot::default()),
         })
@@ -614,7 +612,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_singleton_method("unchanged?", function!(schema_state::unchanged, 1))?;
     class.define_method("encode", method!(NativeSchema::encode, 2))?;
     class.define_method("decode", method!(NativeSchema::decode, 5))?;
-    class.define_singleton_method("bump", function!(stock::bump, 0))?;
     class.define_singleton_method("codecs", function!(stock::codecs, 0))?;
     class.define_singleton_method("codecs=", function!(stock::set_codecs, 1))?;
     let plans = class.define_class("Plans", ruby.class_object())?;

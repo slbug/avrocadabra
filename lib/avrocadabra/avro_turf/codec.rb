@@ -14,14 +14,6 @@ module Avrocadabra
         raise ::Avro::SchemaParseError, e.message
       end
 
-      def encode(datum)
-        stream = StringIO.new(+"".b)
-        AvroTurf.with_codecs(@cache ||= Cache.new) do
-          ::Avro::IO::DatumWriter.new(@source).write(datum, ::Avro::IO::BinaryEncoder.new(stream))
-        end
-        stream.string
-      end
-
       def current?
         @state.current?
       end

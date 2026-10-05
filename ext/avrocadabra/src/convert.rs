@@ -17,7 +17,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     fmt::Write,
-    sync::atomic::Ordering,
 };
 
 pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Vec<u8>, Error> {
@@ -41,7 +40,7 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
         records: &core.records,
         limits: core.limits,
         path: "$".into(),
-        out: Vec::with_capacity(core.encoded_size.load(Ordering::Relaxed)),
+        out: Vec::new(),
         items: 0,
         work: 0,
         bytes: 0,
@@ -68,7 +67,6 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
             "encoded datum exceeds max_bytes",
         ));
     }
-    core.encoded_size.store(ctx.out.len(), Ordering::Relaxed);
     Ok(ctx.out)
 }
 

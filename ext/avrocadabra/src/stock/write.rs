@@ -187,6 +187,7 @@ pub struct Writer<'a> {
     inert_cache: HashMap<VALUE, bool, BuildHasherDefault<Mix>>,
     inert_stamp: (u64, u64),
     back_edges: usize,
+    factors: Vec<(VALUE, i64, bool)>,
 }
 
 #[derive(Default)]
@@ -248,6 +249,7 @@ impl<'a> Writer<'a> {
             max_items: bounds.items,
             max_depth: bounds.depth,
             inert_cache: HashMap::default(),
+            factors: Vec::new(),
             inert_stamp: (u64::MAX, 0),
             back_edges: 0,
         }
@@ -433,8 +435,12 @@ impl<'a> Writer<'a> {
         match adapter {
             Adapter::Pending => {}
             Adapter::Identity => return Ok(datum),
-            Adapter::Decimal { precision, scale } => {
-                if let Some(bytes) = self.native_decimal(datum, precision, scale)? {
+            Adapter::Decimal {
+                precision,
+                scale,
+                factor,
+            } => {
+                if let Some(bytes) = self.native_decimal(datum, precision, scale, factor)? {
                     let text = crate::allocate(|| {
                         let text = self.ruby.str_from_slice(&bytes);
                         text.freeze();
@@ -980,7 +986,7 @@ impl<'a> Writer<'a> {
                 let Some(field) = list.get(index) else {
                     break;
                 };
-                let value = self.field(datum, field.name.value, field.symbol)?;
+                let value = self.field(datum, field)?;
                 self.child(field.node, value)?;
             } else {
                 if index >= unsafe { rb_sys::RARRAY_LEN(fields) } as usize {
@@ -1013,7 +1019,8 @@ impl<'a> Writer<'a> {
         self.ruby_child(schema.as_raw(), value).map(drop)
     }
 
-    fn field(&mut self, datum: Value, name: VALUE, symbol: VALUE) -> R<Value> {
+    fn field(&mut self, datum: Value, field: &Field) -> R<Value> {
+        let (object, name, symbol) = (field.object, field.name.value, field.symbol);
         if let Some(hash) = magnus::RHash::from_value(datum).filter(|_| self.has(datum, LOOKUP_CAP))
         {
             for key in [name, symbol] {
@@ -1035,12 +1042,14 @@ impl<'a> Writer<'a> {
                 })?))
             });
         }
+        // `key?` may run Ruby that renames the field; Ruby Avro reads `field.name` again after it.
         self.call(|_| {
-            if funcall(datum.as_raw(), "key?", &[name])?.to_bool() {
-                funcall(datum.as_raw(), "[]", &[name])
+            let name = if funcall(datum.as_raw(), "key?", &[name])?.to_bool() {
+                funcall(object, "name", &[])?
             } else {
-                funcall(datum.as_raw(), "[]", &[symbol])
-            }
+                funcall(funcall(object, "name", &[])?.as_raw(), "to_sym", &[])?
+            };
+            funcall(datum.as_raw(), "[]", &[name.as_raw()])
         })
     }
 
@@ -1300,7 +1309,7 @@ impl<'a> Writer<'a> {
                 let mut verdict = Some(true);
                 for field in list {
                     self.fused += 1;
-                    let value = self.field(hash.as_value(), field.name.value, field.symbol);
+                    let value = self.field(hash.as_value(), field);
                     self.fused -= 1;
                     let value = match value {
                         Ok(value) => value,
@@ -1448,8 +1457,39 @@ impl<'a> Writer<'a> {
         Ok(ready)
     }
 
-    fn native_decimal(&mut self, datum: Value, precision: i64, scale: i64) -> R<Option<Vec<u8>>> {
-        if !self.group(check::DECIMAL) || !self.has(datum, VALUE_CAP) || !self.decimal_ready()? {
+    /// BytesDecimal multiplies by `@factor`, not by `10**scale`.
+    fn unit_factor(&mut self, factor: VALUE, scale: i64) -> Result<bool, Error> {
+        if let Some(&(_, _, unit)) = self
+            .factors
+            .iter()
+            .find(|entry| entry.0 == factor && entry.1 == scale)
+        {
+            return Ok(unit);
+        }
+        let unit = check::class_raw(factor) == self.world.decimal_class() && {
+            let parts = RArray::try_convert(send(factor, &check::SPLIT, &[])?)?;
+            let digits = RString::from_value(parts.entry(1)?);
+            magnus::Fixnum::from_value(parts.entry(0)?).is_some_and(|sign| sign.to_i64() == 1)
+                && digits.is_some_and(|digits| unsafe { digits.as_slice() } == b"1")
+                && magnus::Fixnum::from_value(parts.entry(3)?)
+                    .is_some_and(|exponent| exponent.to_i64() == scale + 1)
+        };
+        self.factors.push((factor, scale, unit));
+        Ok(unit)
+    }
+
+    fn native_decimal(
+        &mut self,
+        datum: Value,
+        precision: i64,
+        scale: i64,
+        factor: VALUE,
+    ) -> R<Option<Vec<u8>>> {
+        if !self.group(check::DECIMAL)
+            || !self.has(datum, VALUE_CAP)
+            || !self.decimal_ready()?
+            || !self.unit_factor(factor, scale)?
+        {
             return Ok(None);
         }
         let Some((negative, digits, exponent)) = self.decimal_parts(datum)? else {
