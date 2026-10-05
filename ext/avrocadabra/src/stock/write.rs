@@ -28,7 +28,7 @@ pub enum Fail {
     /// Hit a call Ruby could observe: restart with Ruby Avro's selection.
     Abort,
     Raise(Error),
-    Limit(Error),
+    Limit(&'static str),
 }
 
 impl From<Error> for Fail {
@@ -171,7 +171,9 @@ pub struct Writer<'a> {
     io: VALUE,
     io_encoding: i32,
     pub out: Vec<u8>,
-    flushed: usize,
+    /// Bytes this datum put in the stream, Ruby's own writes included.
+    written: usize,
+    seen: Option<usize>,
     caps: Caps,
     groups: u8,
     generation: u64,
@@ -235,7 +237,8 @@ impl<'a> Writer<'a> {
             io,
             io_encoding,
             out: Vec::new(),
-            flushed: 0,
+            written: 0,
+            seen: None,
             caps,
             groups: bounds.groups,
             generation: 0,
@@ -260,7 +263,7 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         let chunk = crate::allocate(|| self.ruby.str_from_slice(&self.out))?;
-        self.flushed += self.out.len();
+        self.written += self.out.len();
         self.out.clear();
         send(self.io, &check::WRITE, &[chunk.as_raw()])?;
         Ok(())
@@ -291,20 +294,43 @@ impl<'a> Writer<'a> {
             return Err(Fail::Abort);
         }
         self.flush()?;
+        self.arm()?;
         self.budget.store(0, self.work)?;
         let result = work(self);
         self.work = self.budget.entry(0)?;
         self.refresh()?;
-        result.map_err(Fail::Raise)
+        let value = result.map_err(Fail::Raise)?;
+        self.sync()?;
+        Ok(value)
     }
 
-    fn limit(&self, message: &str) -> Fail {
-        Fail::Limit(Error::new(self.world.encode_error(), message.to_owned()))
+    /// `StringIO#string` is stock while `CORE` holds.
+    fn length(&self) -> Result<Option<usize>, Error> {
+        if !self.native() {
+            return Ok(None);
+        }
+        let string = super::call0(self.io, &check::STRING)?;
+        Ok(RString::from_value(raw(string)).map(|string| string.len()))
+    }
+
+    fn arm(&mut self) -> Result<(), Error> {
+        self.seen = self.length()?;
+        Ok(())
+    }
+
+    /// Charges what Ruby wrote to the stream itself since `arm`, bypassing `out`.
+    fn sync(&mut self) -> R<()> {
+        if let Some(seen) = self.seen.take()
+            && let Some(length) = self.length()?
+        {
+            self.written += length.saturating_sub(seen);
+        }
+        self.room(0)
     }
 
     fn room(&self, size: usize) -> R<()> {
-        if self.flushed + self.out.len() + size > MAX_BYTES {
-            return Err(self.limit("encoded datum exceeds max_bytes"));
+        if self.written + self.out.len() + size > MAX_BYTES {
+            return Err(Fail::Limit("encoded datum exceeds max_bytes"));
         }
         Ok(())
     }
@@ -330,12 +356,12 @@ impl<'a> Writer<'a> {
         Mark {
             out: self.out.len(),
             items: self.items,
-            bytes: self.flushed,
+            bytes: self.written,
         }
     }
 
     fn rollback(&mut self, mark: Mark) {
-        debug_assert_eq!(mark.bytes, self.flushed);
+        debug_assert_eq!(mark.bytes, self.written);
         self.out.truncate(mark.out);
         self.items = mark.items;
     }
@@ -374,11 +400,11 @@ impl<'a> Writer<'a> {
 
     fn enter(&mut self) -> R<()> {
         if self.depth > self.max_depth {
-            return Err(self.limit("value exceeds maximum depth"));
+            return Err(Fail::Limit("value exceeds maximum depth"));
         }
         self.items += 1;
         if self.items > self.max_items {
-            return Err(self.limit("value exceeds maximum item count"));
+            return Err(Fail::Limit("value exceeds maximum item count"));
         }
         Ok(())
     }
@@ -865,16 +891,28 @@ impl<'a> Writer<'a> {
             return Err(Fail::Abort);
         }
         self.flush()?;
+        self.arm()?;
         let mut failure = None;
         let ruby = self.ruby;
+        let encode_error = self.world.encode_error();
         let result = crate::callback::each(ruby, datum, |args| {
             if failure.is_some() {
                 return Ok(());
             }
             self.refresh()?;
-            match item(self, args).and_then(|()| self.flush().map_err(Fail::Raise)) {
+            let step = self
+                .sync()
+                .and_then(|()| item(self, args))
+                .and_then(|()| self.flush().map_err(Fail::Raise))
+                .and_then(|()| self.arm().map_err(Fail::Raise));
+            match step {
                 Ok(()) => Ok(()),
-                Err(Fail::Raise(error)) | Err(Fail::Limit(error)) => Err(error),
+                Err(Fail::Raise(error)) => Err(error),
+                // Raising stops the iterator; the limit is reported as itself.
+                Err(Fail::Limit(message)) => {
+                    failure = Some(Fail::Limit(message));
+                    Err(Error::new(encode_error, message))
+                }
                 Err(other) => {
                     failure = Some(other);
                     Ok(())
@@ -885,7 +923,9 @@ impl<'a> Writer<'a> {
         if let Some(failure) = failure {
             return Err(failure);
         }
-        result.map_err(Fail::Raise)
+        let value = result.map_err(Fail::Raise)?;
+        self.sync()?;
+        Ok(value)
     }
 
     fn write_map(&mut self, node: usize, values: usize, datum: Value) -> R<Value> {
@@ -1160,7 +1200,7 @@ impl<'a> Writer<'a> {
     fn charge(&mut self) -> R<()> {
         self.work -= 1;
         if self.work < 0 {
-            return Err(self.limit("union search exceeds maximum item count"));
+            return Err(Fail::Limit("union search exceeds maximum item count"));
         }
         Ok(())
     }

@@ -79,6 +79,40 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     end
   end
 
+  it "charges bytes Ruby writes to the stream itself" do
+    io = StringIO.new(+"".b)
+    large = Class.new(String) { define_method(:encode) { |*| "x" * 16 * 1024 * 1024 } }
+    noisy = Class.new(Hash) { define_method(:each) { |&block| io.write("x" * 16 * 1024 * 1024) && super(&block) } }
+    tags = field("tags", { "type" => "map", "values" => "string" })
+    writer = Avro::IO::DatumWriter.new(reference_schema(record_schema("Text", [field("text", "string"), tags])))
+    cache = Avrocadabra::AvroTurf::Cache.new
+    write = lambda do |datum|
+      io.string = +"".b
+      Avrocadabra::AvroTurf.with_codecs(cache) { writer.write(datum, Avro::IO::BinaryEncoder.new(io)) }
+    end
+    write.call({ "text" => "warm", "tags" => {} })
+    [{ "text" => large.new("x"), "tags" => {} },
+     { "text" => "x", "tags" => noisy.new.merge("a" => "b") }].each do |datum|
+      expect { write.call(datum) }
+        .to raise_error(Avro::IO::AvroTypeError) { expect(it.cause.message).to eq("encoded datum exceeds max_bytes") }
+    end
+  end
+
+  it "reports limits reached inside custom iterators as AvroTypeError" do
+    stub_const("Avrocadabra::Schema::MAX_ITEMS", 5)
+    custom = Class.new(Hash) { define_method(:each) { |&block| super(&block) } }
+    writer = Avro::IO::DatumWriter.new(reference_schema({ "type" => "map", "values" => "long" }))
+    cache = Avrocadabra::AvroTurf::Cache.new
+    write = lambda do |entries|
+      Avrocadabra::AvroTurf.with_codecs(cache) do
+        writer.write(entries, Avro::IO::BinaryEncoder.new(StringIO.new(+"".b)))
+      end
+    end
+    write.call({ "a" => 1 })
+    expect { write.call(custom.new.merge((1..20).to_h { ["k#{it}", it] })) }
+      .to raise_error(Avro::IO::AvroTypeError) { expect(it.cause.message).to eq("value exceeds maximum item count") }
+  end
+
   it "accepts values at the native depth limit with validation enabled" do
     schema = record_schema("Link", [field("next", %w[null Link])])
     id = registry.register("depth", reference_schema(schema))

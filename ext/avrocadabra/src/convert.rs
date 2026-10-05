@@ -629,7 +629,8 @@ impl Encoder<'_, '_> {
                 } else {
                     self.callback(|_| values.funcall_public("size", ()))?
                 };
-                if length > self.limits.max_items - self.items {
+                // An iterator's yields are authoritative and counted as they encode.
+                if plain && length > self.limits.max_items - self.items {
                     return Err(self.fail("array exceeds maximum item count"));
                 }
                 if length > 0 {
@@ -668,7 +669,7 @@ impl Encoder<'_, '_> {
                 } else {
                     self.callback(|_| values.funcall_public("size", ()))?
                 };
-                if length > self.limits.max_items - self.items {
+                if plain && length > self.limits.max_items - self.items {
                     return Err(self.fail("map exceeds maximum item count"));
                 }
                 if length > 0 {

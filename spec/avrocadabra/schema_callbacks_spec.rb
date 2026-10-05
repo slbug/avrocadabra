@@ -85,4 +85,15 @@ RSpec.describe Avrocadabra::Schema do
     limited = native_schema({ "type" => "array", "items" => "long" }, max_items: 10)
     expect { limited.encode(value) }.to raise_error(Avrocadabra::EncodeError, /maximum item count/)
   end
+
+  it "trusts yielded values over a declared size above the item limit" do
+    items = native_schema({ "type" => "array", "items" => "long" }, max_items: 10)
+    values = [12]
+    values.define_singleton_method(:size) { 100 }
+    expect(items.decode(items.encode(values))).to eq([12])
+    entries = native_schema({ "type" => "map", "values" => "long" }, max_items: 10)
+    pairs = { "a" => 1 }
+    pairs.define_singleton_method(:size) { 100 }
+    expect(entries.decode(entries.encode(pairs))).to eq("a" => 1)
+  end
 end

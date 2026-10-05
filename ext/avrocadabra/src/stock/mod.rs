@@ -317,11 +317,12 @@ pub fn write(ruby: &Ruby, rb_self: Value, datum: Value, encoder: Value) -> Resul
     match result {
         Ok(value) => flushed.map(|()| value),
         Err(Fail::Raise(error)) => Err(error),
-        Err(Fail::Limit(error)) => {
+        Err(Fail::Limit(message)) => {
             let class = world.avro_type_error;
             let argv = [schema, datum.as_raw()];
             let exception =
                 protect(|| unsafe { rb_sys::rb_class_new_instance(2, argv.as_ptr(), class) })?;
+            let error = Error::new(world.encode_error(), message);
             Err(raise_with_cause(ruby, exception, error))
         }
         Err(Fail::Invalid | Fail::Abort) => Err(Error::new(
