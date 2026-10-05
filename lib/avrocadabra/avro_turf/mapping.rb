@@ -32,12 +32,12 @@ module Avrocadabra
       def stock_modules?(value_class)
         return false unless value_class == Integer || value_class == Float || CONVERSIONS.key?(value_class)
 
-        MODULES.all? { it.singleton_class.instance_method(:encode).source_location&.first == AVRO_SOURCE } &&
-          CONVERSIONS.fetch(value_class, []).all? { value_class.instance_method(it).source_location.nil? }
+        MODULES.all? { stock_source?(it.singleton_class, :encode, AVRO_SOURCE) } &&
+          CONVERSIONS.fetch(value_class, []).all? { stock_source?(value_class, it, nil) }
       end
 
       def native_decimal?
-        DECIMAL_METHODS.all? { |owner, name, source| owner.instance_method(name).source_location&.first == source }
+        DECIMAL_METHODS.all? { |owner, name, source| stock_source?(owner, name, source) }
       end
 
       def union_index(schema, value, budget)
@@ -55,6 +55,10 @@ module Avrocadabra
       end
 
       private
+
+      def stock_source?(owner, name, source)
+        owner.instance_method(name).source_location&.first == source
+      end
 
       def builtin_class(adapter)
         return adapter.singleton_class if MODULES.include?(adapter)

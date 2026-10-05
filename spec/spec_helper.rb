@@ -13,6 +13,7 @@ if ENV["COVERAGE"] == "true"
   SimpleCov.start do
     enable_coverage :branch
     cover "lib/**/*.rb"
+    add_filter "lib/avrocadabra/version.rb"
     minimum_coverage line: 95, branch: 95
   end
 end
