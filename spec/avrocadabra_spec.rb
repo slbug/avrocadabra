@@ -14,6 +14,27 @@ RSpec.describe Avrocadabra do
                                      "logical" => true, "avro_turf" => false)
   end
 
+  it "re-raises load errors from the native extension's own dependencies" do
+    output, errors, status = ruby_subprocess(<<~'RUBY', preload: false)
+      require "zeitwerk"
+      versioned ="avrocadabra/#{RUBY_VERSION.split(".").first(2).join(".")}/avrocadabra"
+      Kernel.prepend(Module.new do
+        define_method(:require) do |name|
+          raise LoadError.new("dependency").tap { it.instance_variable_set(:@path, "dependency") } if name == versioned
+
+          super(name)
+        end
+      end)
+      begin
+        require "avrocadabra"
+      rescue LoadError => e
+        puts e.path
+      end
+    RUBY
+    expect(status.success?).to be(true), errors
+    expect(output).to eq("dependency\n")
+  end
+
   it "supports the optional integration as the first require" do
     output, errors, status = Open3.capture3(RbConfig.ruby, "-I", avrocadabra_library,
                                             "-ravrocadabra/avro_turf", "-e", <<~RUBY)

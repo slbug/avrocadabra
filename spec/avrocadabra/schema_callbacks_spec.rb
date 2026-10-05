@@ -56,12 +56,12 @@ RSpec.describe Avrocadabra::Schema do
   end
 
   it "dispatches core collection and text methods redefined after load" do
-    output, errors, status = ruby_fixture("redefined_core.rb")
+    output, errors, status = ruby_fixture("redefined_core.rb", coverage: false)
     expect(status.success?).to be(true), errors
     expect(JSON.parse(output)).to eq("id" => 7, "items" => [10], "index" => { "changed" => 20 }, "label" => "changed")
   end
 
-  %w[time float].each do |conversion|
+  %w[time float decimal].each do |conversion|
     it "dispatches core methods that a #{conversion} logical conversion redefines" do
       output, errors, status = ruby_fixture("redefined_by_conversion.rb", conversion)
       expect(status.success?).to be(true), errors

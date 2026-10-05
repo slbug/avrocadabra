@@ -132,15 +132,18 @@ fn set_thread_local(name: &LazyId, value: VALUE) {
     unsafe { rb_sys::rb_thread_local_aset(rb_sys::rb_thread_current(), id(name), value) };
 }
 
-/// Bumps after `super`, which may encode against the old definitions. A C frame keeps
-/// argument-free `private` scoped to its caller.
+/// Bumps around `super`: a `method_added` further down may encode against the new definition,
+/// and a visibility change lands only inside `super`. A C frame keeps argument-free `private`
+/// scoped to its caller.
 pub fn hook(_rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    check::bump();
     let result = super_call(args);
     check::bump();
     result
 }
 
 pub fn mixin(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    check::bump();
     let result = super_call(args);
     let adopted = match (&result, args.first()) {
         (Ok(_), Some(target)) => check::mixed(rb_self.as_raw(), target.as_raw()),
@@ -308,6 +311,8 @@ pub fn write(ruby: &Ruby, rb_self: Value, datum: Value, encoder: Value) -> Resul
     );
     let result = writer.write(0, datum);
     let flushed = writer.flush();
+    drop(writer);
+    plans.release(plan);
     set_thread_local(&BUDGET, previous);
     match result {
         Ok(value) => flushed.map(|()| value),

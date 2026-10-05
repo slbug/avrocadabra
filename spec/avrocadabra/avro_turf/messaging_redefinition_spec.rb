@@ -31,7 +31,8 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
   ["write-time validation", "method removed before load", "singleton visibility", "ancestor module method",
    "late mixin method", "returning raise", "constant swapped mid-encode", "fields reordered mid-encode",
    "union branches reordered mid-encode", "hash impostor", "plan replaced mid-encode", "field renamed inside key?",
-   "decimal factor changed"].each do |kind|
+   "decimal factor changed", "definition hook encodes", "method overridden before load",
+   "validator removed before load", "validator defined natively before load"].each do |kind|
     it "matches Ruby Avro after #{kind}" do
       expect_ruby_avro_output("changed_stock_world.rb", kind)
     end

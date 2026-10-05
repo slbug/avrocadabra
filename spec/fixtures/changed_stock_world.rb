@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "avro"
+require "weakref"
 
 engine, kind = ARGV
 calls = 0
@@ -21,6 +22,18 @@ stamp = { type: "record", name: "Stamp",
 single = { type: "record", name: "Single", fields: [{ name: "x", type: { type: "fixed", name: "One", size: 1 } }] }
 renamed = { type: "record", name: "Renamed", fields: [{ name: "a", type: "long" }] }
 decimal = { type: "bytes", logicalType: "decimal", precision: 6, scale: 2 }
+replacing = Class.new(Hash) do
+  define_method(:key?) do |key|
+    if current.delete(:armed)
+      field = current[:schema].fields.first
+      current[:replaced] = WeakRef.new(field.type)
+      field.instance_variable_set(:@type, Avro::Schema.parse('"string"'))
+      current[:nested].call
+      GC.start(full_mark: true, immediate_sweep: true)
+    end
+    super(key)
+  end
+end
 renaming = Class.new(Hash) do
   define_method(:key?) do |key|
     current[:schema].fields.first.instance_variable_set(:@name, "b")
@@ -40,6 +53,15 @@ definition, datum, before, after = {
   end],
   "method removed before load" => [pair, { "v" => 5, "second" => 2 },
                                    -> { BigDecimal.send(:remove_method, :to_i) }, nil],
+  "method overridden before load" => [pair, { "v" => 5, "second" => 2 }, lambda do
+    Avro::IO::BinaryEncoder.prepend(Module.new { define_method(:write_long) { |value| super(value) } })
+  end, nil],
+  "validator removed before load" => [pair, { "v" => 5, "second" => 2 }, lambda do
+    Avro::SchemaValidator.singleton_class.send(:remove_method, :validate!)
+  end, nil],
+  "validator defined natively before load" => [pair, { "v" => 5, "second" => 2 }, lambda do
+    Avro::SchemaValidator.singleton_class.define_method(:validate!, Kernel.instance_method(:frozen?))
+  end, nil],
   "singleton visibility" => [stamp, { "at" => 7 }, nil,
                              -> { Avro::LogicalTypes::TimestampMillis.singleton_class.send(:private, :encode) }],
   "ancestor module method" => [pair, { "v" => 5, "second" => 2 }, nil, -> { on_call.call(Comparable, :is_a?) }],
@@ -57,16 +79,28 @@ definition, datum, before, after = {
     on_call.call(NilClass, :nil?) { |seen| current[:schema].fields.first.type.schemas.reverse! if seen == 1 }
   end],
   "hash impostor" => [pair, impostor.new, nil, -> { on_call.call(impostor, :key?) }],
-  "plan replaced mid-encode" => [single, { "x" => "B" }, nil, lambda do
-    on_call.call(Hash, :key?) do |seen|
-      next unless seen == 1
-
-      current[:schema].fields.first.instance_variable_set(:@type, Avro::Schema.parse('"string"'))
-      current[:nested].call
-      GC.start(full_mark: true, immediate_sweep: true)
+  "plan replaced mid-encode" => [single, replacing.new.update("x" => "B"), nil, lambda do
+    current[:armed] = true
+    current[:report] = lambda do
+      3.times { GC.start(full_mark: true, immediate_sweep: true) }
+      current[:replaced].weakref_alive?
     end
   end],
   "field renamed inside key?" => [renamed, renaming.new.update("a" => 1, "b" => 22), nil, nil],
+  "definition hook encodes" => [pair, { "v" => 5, "second" => 2 }, nil, lambda do
+    encoder = Avro::IO::BinaryEncoder
+    encoder.define_singleton_method(:method_added) do |name|
+      current[:during] = [current[:encode].call({ "v" => 5, "second" => 2 }), calls] if name == :write_long
+      super(name)
+    end
+    current[:encode].call({ "v" => 5, "second" => 2 })
+    original = encoder.instance_method(:write_long)
+    encoder.define_method(:write_long) do |value|
+      count.call
+      original.bind_call(self, value)
+    end
+    current[:report] = -> { current[:during] }
+  end],
   "decimal factor changed" => [decimal, BigDecimal("1.5"), nil, lambda do
     current[:prepare] = ->(schema) { schema.type_adapter.instance_variable_set(:@factor, BigDecimal(1000)) }
   end]
@@ -82,6 +116,7 @@ encode = lambda do |value|
   output.string.unpack1("H*")
 end
 current[:nested] = -> { encode.call({ "x" => "changed" }) }
+current[:encode] = encode
 write = lambda do
   current[:schema] = Avro::Schema.parse(JSON.generate(definition))
   current[:prepare]&.call(current[:schema])
@@ -92,4 +127,4 @@ end
 write.call
 after&.call
 calls = 0
-puts [write.call, calls].inspect
+puts [write.call, calls, current[:report]&.call].inspect

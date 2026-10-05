@@ -338,11 +338,16 @@ impl Encoder<'_, '_> {
         i32::try_from(self.integer(value)?).map_err(|_| self.fail("Avro int out of range"))
     }
 
-    fn float(&self, value: Value) -> Result<f64, Error> {
-        if !float(value) && !integer(value) && !value.is_kind_of(self.decimal) {
+    fn float(&mut self, value: Value) -> Result<f64, Error> {
+        if float(value) || integer(value) {
+            return self.ruby_result(f64::try_convert(value));
+        }
+        if !value.is_kind_of(self.decimal) {
             return Err(self.fail("expected Float, Integer or BigDecimal"));
         }
-        self.ruby_result(f64::try_convert(value))
+        // BigDecimal converts through `to_f`, which is Ruby.
+        let converted = self.callback(|_| f64::try_convert(value));
+        self.ruby_result(converted)
     }
 
     fn write_text(&mut self, value: Value) -> Result<usize, Error> {

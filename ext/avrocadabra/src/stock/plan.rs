@@ -506,10 +506,7 @@ impl Plans {
         {
             return Ok(Some(plan));
         }
-        let Some(plan) = Plan::build(env, schema)? else {
-            return Ok(None);
-        };
-        let plan = Arc::new(plan);
+        let built = Plan::build(env, schema)?.map(Arc::new);
         let mut cached = self.lock();
         cached.retired.retain(|plan| Arc::strong_count(plan) > 1);
         if let Some(position) = cached.entries.iter().position(|entry| entry.0 == schema) {
@@ -518,7 +515,10 @@ impl Plans {
                 cached.retired.push(replaced);
             }
         }
-        if cached.entries.len() >= LIMIT
+        let Some(plan) = built else {
+            return Ok(None);
+        };
+        while cached.entries.len() >= LIMIT
             && let Some(position) = cached
                 .entries
                 .iter()
@@ -528,5 +528,13 @@ impl Plans {
         }
         cached.entries.push((schema, plan.clone()));
         Ok(Some(plan))
+    }
+
+    /// Ends an encode's hold on `plan`, freeing replaced plans no encode walks anymore.
+    pub fn release(&self, plan: Arc<Plan>) {
+        drop(plan);
+        self.lock()
+            .retired
+            .retain(|plan| Arc::strong_count(plan) > 1);
     }
 }
