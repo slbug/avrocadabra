@@ -136,7 +136,7 @@ RSpec.describe Avrocadabra::AvroTurf::Cache do
 
   it "shrinks write plans back to the limit once nested encodes release them" do
     cache = described_class.new
-    schemas = Array.new(131) { reference_schema(record_schema("Held#{it}", [field("x", "long")])) }
+    schemas = Array.new(130) { reference_schema(record_schema("Held#{it}", [field("x", "long")])) }
     encode = lambda do |index|
       nested = Class.new(Hash) do
         define_method(:key?) do |key|
@@ -150,9 +150,6 @@ RSpec.describe Avrocadabra::AvroTurf::Cache do
       end
     end
     encode.call(0)
-    Avrocadabra::AvroTurf.with_codecs(cache) do
-      Avro::IO::DatumWriter.new(schemas.last).write({ "x" => 1 }, Avro::IO::BinaryEncoder.new(StringIO.new(+"".b)))
-    end
     roots = ObjectSpace.reachable_objects_from(cache.instance_variable_get(:@plans))
     expect(roots.count { it.is_a?(Avro::Schema::RecordSchema) }).to eq(128)
   end

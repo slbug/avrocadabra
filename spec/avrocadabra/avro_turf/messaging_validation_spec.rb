@@ -61,6 +61,24 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
       .to eq(reference.encode(datum, schema_id: id, validate: true))
   end
 
+  it "never writes past the byte bound before raising" do
+    limit = 16 * 1024 * 1024
+    writer = Avro::IO::DatumWriter.new(reference_schema(record_schema("Sized", [field("text", "string"),
+                                                                                field("count", "long")])))
+    cache = Avrocadabra::AvroTurf::Cache.new
+    write = lambda do |size, io|
+      Avrocadabra::AvroTurf.with_codecs(cache) do
+        writer.write({ "text" => "x" * size, "count" => 1 }, Avro::IO::BinaryEncoder.new(io))
+      end
+    end
+    write.call(1, StringIO.new(+"".b))
+    [limit - 4, limit - 3].each do |size|
+      io = StringIO.new(+"".b)
+      expect { write.call(size, io) }.to raise_error(Avro::IO::AvroTypeError) { expect(it.cause.message).to eq("encoded datum exceeds max_bytes") }
+      expect(io.string.bytesize).to be <= limit
+    end
+  end
+
   it "accepts values at the native depth limit with validation enabled" do
     schema = record_schema("Link", [field("next", %w[null Link])])
     id = registry.register("depth", reference_schema(schema))

@@ -302,20 +302,28 @@ impl<'a> Writer<'a> {
         Fail::Limit(Error::new(self.world.encode_error(), message.to_owned()))
     }
 
-    fn emit(&mut self, bytes: &[u8]) -> R<()> {
-        self.out.extend_from_slice(bytes);
-        if self.flushed + self.out.len() > MAX_BYTES {
+    fn room(&self, size: usize) -> R<()> {
+        if self.flushed + self.out.len() + size > MAX_BYTES {
             return Err(self.limit("encoded datum exceeds max_bytes"));
         }
         Ok(())
     }
 
-    fn emit_long(&mut self, value: i64) -> R<()> {
-        write_long(value, &mut self.out);
-        if self.flushed + self.out.len() > MAX_BYTES {
-            return Err(self.limit("encoded datum exceeds max_bytes"));
-        }
+    fn emit(&mut self, bytes: &[u8]) -> R<()> {
+        self.room(bytes.len())?;
+        self.out.extend_from_slice(bytes);
         Ok(())
+    }
+
+    /// Unwinds an over-limit varint: a failed encode still flushes `out`.
+    fn emit_long(&mut self, value: i64) -> R<()> {
+        let start = self.out.len();
+        write_long(value, &mut self.out);
+        let room = self.room(0);
+        if room.is_err() {
+            self.out.truncate(start);
+        }
+        room
     }
 
     fn mark(&self) -> Mark {
@@ -761,9 +769,9 @@ impl<'a> Writer<'a> {
             let encoder = self.encoder;
             return self.call(|_| fcall(encoder, "write_bytes", &[text.as_raw()]));
         }
-        let bytes = unsafe { text.as_slice() }.to_vec();
+        let bytes = unsafe { text.as_slice() };
         self.emit_long(bytes.len() as i64)?;
-        self.emit(&bytes)?;
+        self.emit(bytes)?;
         Ok(int(bytes.len() as i64))
     }
 

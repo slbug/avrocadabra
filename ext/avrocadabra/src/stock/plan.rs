@@ -508,33 +508,39 @@ impl Plans {
         }
         let built = Plan::build(env, schema)?.map(Arc::new);
         let mut cached = self.lock();
-        cached.retired.retain(|plan| Arc::strong_count(plan) > 1);
         if let Some(position) = cached.entries.iter().position(|entry| entry.0 == schema) {
             let (_, replaced) = cached.entries.remove(position);
             if Arc::strong_count(&replaced) > 1 {
                 cached.retired.push(replaced);
             }
         }
+        cached.prune(usize::from(built.is_some()));
         let Some(plan) = built else {
             return Ok(None);
         };
-        while cached.entries.len() >= LIMIT
-            && let Some(position) = cached
-                .entries
-                .iter()
-                .position(|entry| Arc::strong_count(&entry.1) == 1)
-        {
-            cached.entries.remove(position);
-        }
         cached.entries.push((schema, plan.clone()));
         Ok(Some(plan))
     }
 
-    /// Ends an encode's hold on `plan`, freeing replaced plans no encode walks anymore.
+    /// Ends an encode's hold on `plan`.
     pub fn release(&self, plan: Arc<Plan>) {
         drop(plan);
-        self.lock()
-            .retired
-            .retain(|plan| Arc::strong_count(plan) > 1);
+        self.lock().prune(0);
+    }
+}
+
+impl Cached {
+    /// Drops plans no encode walks: every retired one, and cached ones until `room` more fit
+    /// under `LIMIT`. Nested encodes can hold more than `LIMIT` at once.
+    fn prune(&mut self, room: usize) {
+        self.retired.retain(|plan| Arc::strong_count(plan) > 1);
+        while self.entries.len() + room > LIMIT
+            && let Some(position) = self
+                .entries
+                .iter()
+                .position(|entry| Arc::strong_count(&entry.1) == 1)
+        {
+            self.entries.remove(position);
+        }
     }
 }
