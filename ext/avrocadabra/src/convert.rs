@@ -15,8 +15,8 @@ use magnus::{
     encoding::{Coderange, EncodingCapable, Index},
     prelude::*,
     r_hash::ForEach,
-    rb_sys::{AsRawValue, FromRawValue},
-    value::Id,
+    rb_sys::{AsRawId, AsRawValue, FromRawValue},
+    value::{Id, IntoId, LazyId},
 };
 use num_bigint::BigInt;
 use rb_sys::VALUE;
@@ -123,22 +123,62 @@ enum Op {
     Validate,
 }
 
+static EACH: LazyId = LazyId::new("each");
+static SIZE: LazyId = LazyId::new("size");
+static EACH_WITH_INDEX: LazyId = LazyId::new("each_with_index");
+static KEYS: LazyId = LazyId::new("keys");
+static KEY: LazyId = LazyId::new("key?");
+static AREF: LazyId = LazyId::new("[]");
+static DEFAULT: LazyId = LazyId::new("default");
+static DEFAULT_PROC: LazyId = LazyId::new("default_proc");
+static ENCODE: LazyId = LazyId::new("encode");
+static TO_S: LazyId = LazyId::new("to_s");
+static IS_A: LazyId = LazyId::new("is_a?");
+static NIL: LazyId = LazyId::new("nil?");
+static CLASS: LazyId = LazyId::new("class");
+static INSPECT: LazyId = LazyId::new("inspect");
+static RESPOND_TO: LazyId = LazyId::new("respond_to?");
+static EQL: LazyId = LazyId::new("eql?");
+static EQUAL: LazyId = LazyId::new("==");
+static INDEX: LazyId = LazyId::new("index");
+static AND: LazyId = LazyId::new("&");
+static SHIFT: LazyId = LazyId::new(">>");
+static TIMES: LazyId = LazyId::new("*");
+static MINUS: LazyId = LazyId::new("-");
+static PLUS: LazyId = LazyId::new("+");
+static DIVIDE: LazyId = LazyId::new("/");
+static GREATER: LazyId = LazyId::new(">");
+static TO_I: LazyId = LazyId::new("to_i");
+static UNSHIFT: LazyId = LazyId::new("unshift");
+static FIRST: LazyId = LazyId::new("first");
+static PACK: LazyId = LazyId::new("pack");
+static LENGTH: LazyId = LazyId::new("length");
+static FREEZE: LazyId = LazyId::new("freeze");
+static USEC: LazyId = LazyId::new("usec");
+static NSEC: LazyId = LazyId::new("nsec");
+
+static SEQUENCE: [&LazyId; 3] = [&EACH, &SIZE, &EACH_WITH_INDEX];
+static MAP: [&LazyId; 3] = [&EACH, &SIZE, &KEYS];
+static LOOKUP: [&LazyId; 4] = [&KEY, &AREF, &DEFAULT, &DEFAULT_PROC];
+static TEXT: [&LazyId; 2] = [&ENCODE, &TO_S];
+static VALIDATE: [&LazyId; 5] = [&IS_A, &NIL, &CLASS, &INSPECT, &RESPOND_TO];
+
 impl Op {
-    fn methods(self) -> &'static [&'static str] {
+    fn methods(self) -> &'static [&'static LazyId] {
         match self {
-            Self::Sequence => &["each", "size", "each_with_index"],
-            Self::Map => &["each", "size", "keys"],
-            Self::Lookup => &["key?", "[]", "default", "default_proc"],
-            Self::Text => &["encode", "to_s"],
-            Self::Validate => &["is_a?", "nil?", "class", "inspect", "respond_to?"],
+            Self::Sequence => &SEQUENCE,
+            Self::Map => &MAP,
+            Self::Lookup => &LOOKUP,
+            Self::Text => &TEXT,
+            Self::Validate => &VALIDATE,
         }
     }
 }
 
-fn basic(class: VALUE, names: &[&str]) -> bool {
+fn basic(class: VALUE, names: &[&LazyId]) -> bool {
+    let ruby = unsafe { Ruby::get_unchecked() };
     names.iter().all(|name| unsafe {
-        let id = rb_sys::rb_intern2(name.as_ptr().cast(), name.len() as _);
-        rb_sys::rb_method_basic_definition_p(class, id) != 0
+        rb_sys::rb_method_basic_definition_p(class, (***name).into_id_with(&ruby).as_raw()) != 0
     })
 }
 
@@ -254,9 +294,9 @@ impl Encoder<'_, '_> {
             return core;
         }
         let c = &self.classes;
-        let core = basic(c.string, &["eql?", "=="])
-            && basic(c.symbol, &["eql?"])
-            && basic(c.array, &["index"]);
+        let core = basic(c.string, &[&EQL, &EQUAL])
+            && basic(c.symbol, &[&EQL])
+            && basic(c.array, &[&INDEX]);
         self.core.set(Some(core));
         core
     }
@@ -323,12 +363,12 @@ impl Encoder<'_, '_> {
         if self.decimal_adapter(mapping)? {
             let c = &self.classes;
             return Self::cached(&self.decimals, || {
-                Ok(
-                    basic(c.integer, &["&", ">>", "[]", "==", "*", "-", ">", "to_i"])
-                        && basic(c.array, &["unshift", "first", "pack"])
-                        && basic(c.string, &["length", "freeze"])
-                        && mapping.native_decimal()?,
-                )
+                Ok(basic(
+                    c.integer,
+                    &[&AND, &SHIFT, &AREF, &EQUAL, &TIMES, &MINUS, &GREATER, &TO_I],
+                ) && basic(c.array, &[&UNSHIFT, &FIRST, &PACK])
+                    && basic(c.string, &[&LENGTH, &FREEZE])
+                    && mapping.native_decimal()?)
             });
         }
         let c = &self.classes;
@@ -336,10 +376,10 @@ impl Encoder<'_, '_> {
         if let Some(&(_, stock)) = self.modules.borrow().iter().find(|entry| entry.0 == class) {
             return Ok(stock);
         }
-        let stock = basic(c.integer, &["to_i", "*", "+", "/"])
-            && basic(c.float, &["to_i"])
-            && basic(c.rational, &["to_i"])
-            && basic(c.time, &["to_i", "usec", "nsec"])
+        let stock = basic(c.integer, &[&TO_I, &TIMES, &PLUS, &DIVIDE])
+            && basic(c.float, &[&TO_I])
+            && basic(c.rational, &[&TO_I])
+            && basic(c.time, &[&TO_I, &USEC, &NSEC])
             && mapping.stock_modules(unsafe { Value::from_raw(class) })?;
         self.modules.borrow_mut().push((class, stock));
         Ok(stock)
@@ -543,6 +583,10 @@ impl Encoder<'_, '_> {
         Ok(())
     }
 
+    fn overflowed(&self) -> bool {
+        self.out.len() > self.limits.max_bytes
+    }
+
     fn charge_work(&mut self) -> Result<(), Error> {
         self.work += 1;
         if self.work > self.limits.max_items {
@@ -600,16 +644,11 @@ impl Encoder<'_, '_> {
 
     fn logical<T: TryConvert>(
         &mut self,
-        value: Value,
         call: &str,
         args: impl magnus::ArgList,
     ) -> Result<T, Error> {
         let logical = self.logical;
-        let result = if self.trusted(value) {
-            logical.funcall(call, args)
-        } else {
-            self.callback(|_| logical.funcall(call, args))
-        };
+        let result = self.callback(|_| logical.funcall(call, args));
         self.ruby_result(result)
     }
 
@@ -808,6 +847,7 @@ impl Encoder<'_, '_> {
                 Ok(true) => return Ok(()),
                 Err(error)
                     if self.work > self.limits.max_items
+                        || self.overflowed()
                         || !error.is_kind_of(self.ruby.exception_standard_error()) =>
                 {
                     return Err(error);
@@ -941,6 +981,9 @@ impl Encoder<'_, '_> {
     ) -> Result<(), Error> {
         if depth > self.limits.max_depth {
             return Err(self.fail("value exceeds maximum depth"));
+        }
+        if self.overflowed() {
+            return Err(self.fail("encoded datum exceeds max_bytes"));
         }
         self.items += 1;
         if self.items > self.limits.max_items {
@@ -1181,7 +1224,7 @@ impl Encoder<'_, '_> {
                             match self.value(schema, ns, value, depth, None) {
                                 Ok(()) => return Ok(()),
                                 Err(error) => {
-                                    if self.work > self.limits.max_items {
+                                    if self.work > self.limits.max_items || self.overflowed() {
                                         return Err(error);
                                     }
                                     failure = Some(error.to_string());
@@ -1208,7 +1251,6 @@ impl Encoder<'_, '_> {
             }
             Schema::Decimal(decimal) => {
                 let unscaled: String = self.logical(
-                    value,
                     "decimal_unscaled",
                     (value, decimal.precision, decimal.scale),
                 )?;
@@ -1235,7 +1277,7 @@ impl Encoder<'_, '_> {
                 Ok(())
             }
             Schema::BigDecimal => {
-                let parts: RArray = self.logical(value, "big_decimal_parts", (value,))?;
+                let parts: RArray = self.logical("big_decimal_parts", (value,))?;
                 let coefficient: RString = parts.entry(0)?;
                 if coefficient.len() > self.limits.max_bytes.saturating_mul(3) {
                     return Err(self.fail("big-decimal exceeds max_bytes"));
@@ -1254,7 +1296,7 @@ impl Encoder<'_, '_> {
                 Ok(())
             }
             Schema::Date => {
-                let days: Value = self.logical(value, "date_days", (value,))?;
+                let days: Value = self.logical("date_days", (value,))?;
                 let days = self.int32(days)?;
                 self.emit_long(days.into());
                 Ok(())
@@ -1281,7 +1323,7 @@ impl Encoder<'_, '_> {
                     Schema::TimestampMicros => 1_000_000,
                     _ => 1_000_000_000,
                 };
-                let ticks: Value = self.logical(value, "timestamp_ticks", (value, units))?;
+                let ticks: Value = self.logical("timestamp_ticks", (value, units))?;
                 let ticks = self.integer(ticks)?;
                 self.emit_long(ticks);
                 Ok(())

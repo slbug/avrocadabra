@@ -188,6 +188,17 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     expect(results).to eq([[IOError, "field name equality failed"]] * 2)
   end
 
+  it "never dispatches equality on colliding datum keys during field lookups" do
+    id = registry.register("pairs",
+                           reference_schema(record_schema("Pair", [field("left", "int"), field("right", "string")])))
+    colliding = Class.new do
+      def hash = "right".hash
+      def eql?(_other) = raise(IOError, "datum key equality")
+    end
+    datum = { colliding.new => 0 }.merge("left" => 1, "right" => "x")
+    expect(native.encode(datum, schema_id: id)).to eq(reference.encode(datum, schema_id: id))
+  end
+
   it "looks up identity hash fields by the schema's field name objects" do
     definition = record_schema("Pair", [field("left", "int"), field("right", %w[null string])])
     nested = ["null", definition]

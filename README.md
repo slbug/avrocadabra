@@ -94,7 +94,7 @@ Limits must be positive:
 
 - Items count values, containers, nulls, expanded defaults and union-search visits.
 - Union wrappers and named references add no datum depth.
-- Bytes bound the consumed datum and aggregate content, including copied names. They do not bound RSS.
+- Bytes bound the consumed datum and aggregate content, including copied names. Encoding stops once written bytes, discarded union attempts included, exceed the limit. They do not bound RSS.
 - Resolution applies the smaller writer/reader limits before copying or decoding, including discarded fields.
 - Schema JSON: 1 MiB total, 64 levels, 65,536 nodes. Fixed-scale decimals: 4,096 digits. Big-decimal coefficients use the byte limit; exponents never expand into zero-filled strings.
 

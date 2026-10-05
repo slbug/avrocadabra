@@ -61,6 +61,14 @@ RSpec.describe Avrocadabra::Schema do
     expect(JSON.parse(output)).to eq("id" => 7, "items" => [10], "index" => { "changed" => 20 }, "label" => "changed")
   end
 
+  %w[time float].each do |conversion|
+    it "dispatches core methods that a #{conversion} logical conversion redefines" do
+      output, errors, status = ruby_fixture("redefined_by_conversion.rb", conversion)
+      expect(status.success?).to be(true), errors
+      expect(output).to eq("22\n")
+    end
+  end
+
   it "bounds iterators that yield more values than their declared size" do
     value = [12]
     value.define_singleton_method(:each) { |&block| 100.times { block.call(12) } }

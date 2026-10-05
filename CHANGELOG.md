@@ -1,6 +1,6 @@
 ## 0.0.3
 
-- Encoding writes Avro bytes during Ruby conversion: no intermediate value tree, no serde pass. `release_gvl` no longer changes `encode`.
+- Encoding writes Avro bytes during Ruby conversion: no intermediate value tree, no serde pass. `max_bytes` stops encoding as soon as written bytes exceed it, discarded union attempts included. `release_gvl` no longer changes `encode`.
 - Collections and strings skip Ruby dispatch while their class resolves `each`, `size`, `keys`, `key?`, `[]`, `default`, `default_proc`, `encode` and `to_s` to core definitions; these checks reset after every Ruby callback.
 - AvroTurf unions resolve natively while a datum invokes no Ruby callbacks. Default procs, overridden lookups, custom or redefined adapters, date or timestamp values other than Integer, Float or `Time`, and other value classes keep Ruby Avro's validation and call counts. Every examined branch charges the work budget.
 - Built-in `BytesDecimal` encodes natively, matching bigdecimal's truncated `Float#to_d` digits and dtoa tie rounding, while its Ruby Avro and bigdecimal methods keep stock definitions and `BigDecimal.limit` is 0.
