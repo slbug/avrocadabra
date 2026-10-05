@@ -5,28 +5,31 @@ bundle exec rake compile
 bundle exec ruby --yjit benchmark/codec.rb --json benchmark/results.json
 ```
 
-Prepared schemas; cross-decoding checked before timing. Synthetic payloads: 3 items / 359 bytes, 500 items / 47,107 bytes. Unicode, binary, nulls, maps, enums, timestamps and decimals.
+Prepared schemas; cross-decoding checked before timing. Synthetic payloads: 3 items / 359 bytes, 500 items / 47,107 bytes. Unicode, binary, nulls, maps, enums, timestamps and decimals. Nested: nullable 500-entry map of records, each with a nullable `[string, record]` array of nullable scalars and a decimal; 30,683 bytes.
 
-Ruby 4.0.7 + YJIT + Prism, `arm64-darwin27`, Rust 1.99.0, Avrocadabra 0.0.1, Ruby avro 1.12.2. Per operation: 0.15 s warmup, five 0.25 s batches, GC enabled. Latency: 500 separate samples, including clock overhead. [Raw results](results.json).
+Ruby 4.0.7 + YJIT + Prism, `arm64-darwin27`, Rust 1.99.0, Avrocadabra 0.0.3, Ruby avro 1.12.2. Per operation: 0.15 s warmup, five 0.25 s batches, GC enabled. Latency: 500 separate samples, including clock overhead. [Raw results](results.json).
 
 Allocations count Ruby objects, excluding native memory. GVL comparisons measure single-thread transition cost; parallel scaling is unmeasured.
 
 | Payload | Operation | Engine | p50 µs | p95 µs | Ops/s | Ruby allocs/op |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| small | encode | Ruby avro | 11 | 14 | 77,562 | 138 |
-| small | decode | Ruby avro | 10 | 13 | 98,061 | 56 |
-| small | encode | Native, GVL held | 11 | 51 | 83,817 | 63 |
-| small | decode | Native, GVL held | 7 | 9 | 127,669 | 50 |
-| small | encode | Native, GVL released | 11 | 14 | 85,939 | 63 |
-| small | decode | Native, GVL released | 7 | 9 | 127,467 | 50 |
-| large | encode | Ruby avro | 1,129 | 1,794 | 822 | 13,746 |
-| large | decode | Ruby avro | 972 | 1,233 | 981 | 5,771 |
-| large | encode | Native, GVL held | 1,002 | 1,350 | 971 | 5,529 |
-| large | decode | Native, GVL held | 718 | 1,046 | 1,327 | 5,268 |
-| large | encode | Native, GVL released | 1,011 | 1,369 | 965 | 5,529 |
-| large | decode | Native, GVL released | 724 | 1,036 | 1,316 | 5,268 |
+| small | encode | Ruby avro | 12 | 15 | 75,313 | 138 |
+| small | decode | Ruby avro | 11 | 13 | 91,387 | 56 |
+| small | encode | Native, GVL held | 4 | 5 | 224,312 | 20 |
+| small | decode | Native, GVL held | 8 | 9 | 123,389 | 50 |
+| small | decode | Native, GVL released | 8 | 21 | 119,242 | 50 |
+| large | encode | Ruby avro | 1,188 | 1,455 | 810 | 13,746 |
+| large | decode | Ruby avro | 1,102 | 1,395 | 879 | 5,771 |
+| large | encode | Native, GVL held | 315 | 468 | 2,985 | 2,008 |
+| large | decode | Native, GVL held | 754 | 1,081 | 1,208 | 5,268 |
+| large | decode | Native, GVL released | 763 | 1,089 | 1,249 | 5,268 |
+| nested | encode | Ruby avro | 13,472 | 14,482 | 72 | 105,802 |
+| nested | decode | Ruby avro | 2,313 | 2,598 | 432 | 7,504 |
+| nested | encode | Native, GVL held | 458 | 602 | 2,090 | 2,001 |
+| nested | decode | Native, GVL held | 1,129 | 1,360 | 861 | 6,002 |
+| nested | decode | Native, GVL released | 1,176 | 1,465 | 830 | 6,002 |
 
-Native throughput: encode 8–18% faster, decode 1.3–1.4× Ruby avro. Releasing the GVL changed throughput by less than 3%.
+Native throughput: flat encode 3.0–3.7×, nested encode 29×; decode 1.35–2.0× Ruby avro. Encode writes while converting Ruby values, so it has no GVL-released variant; releasing the GVL for decode changed throughput by less than 4%.
 
 ## Messaging
 
@@ -34,24 +37,30 @@ Native throughput: encode 8–18% faster, decode 1.3–1.4× Ruby avro. Releasin
 bundle exec ruby --yjit benchmark/messaging.rb --json benchmark/messaging_results.json
 ```
 
-Full Messaging calls against AvroTurf 1.20.2; stock runs before integration hooks load. Same timing settings; warm schema, registry and native caches. AvroTurf's fake registry uses local HTTP outside timed loops. Reader resolution adds a defaulted field. Payloads with headers: 364 and 47,112 bytes.
+Full Messaging calls against AvroTurf 1.20.2; stock runs before integration hooks load. Same timing settings; warm schema, registry and native caches. AvroTurf's fake registry uses local HTTP outside timed loops. Reader resolution adds a defaulted field. Payloads with headers: 364, 47,112 and 30,688 bytes.
 
 | Payload | Operation | Engine | p50 µs | p95 µs | Ops/s | Ruby allocs/op |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| small | encode | Ruby AvroTurf | 18 | 22 | 48,308 | 216 |
-| small | decode | Ruby AvroTurf | 10 | 12 | 93,608 | 60 |
-| small | decode resolved | Ruby AvroTurf | 12 | 14 | 78,092 | 62 |
-| large | encode | Ruby AvroTurf | 1,732 | 1,884 | 576 | 19,423 |
-| large | decode | Ruby AvroTurf | 1,001 | 1,208 | 962 | 5,775 |
-| large | decode resolved | Ruby AvroTurf | 1,163 | 1,390 | 826 | 5,777 |
-| small | encode | Native, GVL held | 19 | 23 | 49,212 | 78 |
-| small | decode | Native, GVL held | 15 | 19 | 64,477 | 64 |
-| small | decode resolved | Native, GVL held | 25 | 29 | 38,304 | 66 |
-| large | encode | Native, GVL held | 1,109 | 1,443 | 856 | 6,538 |
-| large | decode | Native, GVL held | 849 | 1,094 | 1,133 | 6,276 |
-| large | decode resolved | Native, GVL held | 1,239 | 1,513 | 782 | 6,278 |
+| small | encode | Ruby AvroTurf | 18 | 23 | 47,385 | 216 |
+| small | decode | Ruby AvroTurf | 10 | 13 | 93,060 | 60 |
+| small | decode resolved | Ruby AvroTurf | 12 | 14 | 79,459 | 62 |
+| large | encode | Ruby AvroTurf | 1,758 | 2,062 | 567 | 19,423 |
+| large | decode | Ruby AvroTurf | 996 | 1,198 | 974 | 5,775 |
+| large | decode resolved | Ruby AvroTurf | 1,146 | 1,437 | 827 | 5,777 |
+| nested | encode | Ruby AvroTurf | 14,733 | 15,876 | 70 | 118,889 |
+| nested | decode | Ruby AvroTurf | 2,175 | 2,525 | 449 | 7,508 |
+| nested | decode resolved | Ruby AvroTurf | 2,463 | 2,835 | 407 | 7,510 |
+| small | encode | Native, GVL held | 10 | 12 | 90,208 | 53 |
+| small | decode | Native, GVL held | 11 | 14 | 83,223 | 64 |
+| small | decode resolved | Native, GVL held | 17 | 21 | 51,903 | 66 |
+| large | encode | Native, GVL held | 421 | 541 | 2,263 | 1,544 |
+| large | decode | Native, GVL held | 843 | 1,044 | 1,131 | 6,276 |
+| large | decode resolved | Native, GVL held | 1,223 | 1,416 | 796 | 6,278 |
+| nested | encode | Native, GVL held | 578 | 735 | 1,651 | 1,531 |
+| nested | decode | Native, GVL held | 1,288 | 1,508 | 756 | 7,009 |
+| nested | decode resolved | Native, GVL held | 2,034 | 2,339 | 494 | 7,011 |
 
-Large native messages: encode 1.5× faster, decode 1.2× faster, resolved decode 5% slower. Small: encode near parity, decode 1.5× slower, resolved decode 2.0× slower. Calls include schema mutation checks and Ruby callbacks. Decoding allocates more Ruby objects than stock.
+Nested native messages: encode 24× faster, decode 1.7× faster, resolved decode 1.2× faster. Large: encode 4.0× faster, decode 1.2× faster, resolved decode 4% slower. Small: encode 1.9× faster, decode 1.1× slower, resolved decode 1.5× slower. Calls include schema mutation checks and Ruby callbacks. Flat decoding allocates more Ruby objects than stock.
 
 [Raw results](messaging_results.json). Broker I/O, application processing and consumer throughput are unmeasured.
 

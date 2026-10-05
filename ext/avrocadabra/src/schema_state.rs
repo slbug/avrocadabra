@@ -1,21 +1,17 @@
 use magnus::{
-    Error, RArray, RHash, RString, Symbol, Value, encoding::EncodingCapable, prelude::*,
-    r_hash::ForEach, rb_sys::AsRawValue,
+    Error, RArray, RHash, RString, Value, encoding::EncodingCapable, prelude::*, r_hash::ForEach,
+    rb_sys::AsRawValue,
 };
 
 fn identical(left: Value, right: Value) -> bool {
     left.as_raw() == right.as_raw()
 }
 
-pub fn unchanged(attributes: RArray, containers: RArray) -> Result<bool, Error> {
-    for index in (0..attributes.len() as isize).step_by(3) {
-        let object: Value = attributes.entry(index)?;
-        let attribute: Symbol = attributes.entry(index + 1)?;
-        let previous: Value = attributes.entry(index + 2)?;
-        if !identical(object.funcall(attribute, ())?, previous) {
-            return Ok(false);
-        }
-    }
+pub fn unchanged(ruby: &magnus::Ruby, containers: RArray) -> Result<bool, Error> {
+    contents_unchanged(containers).map_err(|error| crate::materialize(ruby, error))
+}
+
+fn contents_unchanged(containers: RArray) -> Result<bool, Error> {
     for index in (0..containers.len() as isize).step_by(2) {
         let object: Value = containers.entry(index)?;
         let previous: Value = containers.entry(index + 1)?;

@@ -63,7 +63,7 @@ fn read_long(bytes: &mut &[u8]) -> Result<i64, String> {
     Err("unterminated big-decimal varint".into())
 }
 
-fn write_long(value: i64, output: &mut Vec<u8>) {
+pub(crate) fn write_long(value: i64, output: &mut Vec<u8>) {
     let mut value = ((value as u64) << 1) ^ ((value >> 63) as u64);
     while value > 0x7f {
         output.push((value as u8) | 0x80);

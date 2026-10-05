@@ -17,6 +17,27 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     expect(native_schema(definition).encode(factory.call)).to eq(bytes.byteslice(5..).b)
   end
 
+  %w[redefined_during_encode.rb redefined_adapter.rb redefined_conversion.rb].each do |fixture|
+    it "matches Ruby Avro with methods redefined by #{fixture}" do
+      results = [ruby_fixture(fixture, "stock"), ruby_fixture(fixture, "native")].map do |output, errors, status|
+        expect(status.success?).to be(true), errors
+        output
+      end
+      expect(results.last).to eq(results.first)
+    end
+  end
+
+  %w[date date_time].each do |kind|
+    it "matches Ruby Avro when #{kind} conversion calls a redefined Time constructor" do
+      results = [ruby_fixture("redefined_time_constructor.rb", "stock", kind),
+                 ruby_fixture("redefined_time_constructor.rb", "native", kind)].map do |output, errors, status|
+        expect(status.success?).to be(true), errors
+        output
+      end
+      expect(results.last).to eq(results.first)
+    end
+  end
+
   it "dispatches Array iteration before encoding each yielded item" do
     klass = Class.new(Array) do
       def each

@@ -12,20 +12,24 @@ mod validation;
 mod wire;
 
 use apache_avro::{
-    Schema, reader::datum::GenericDatumReader, schema::ResolvedSchema,
-    writer::datum::GenericDatumWriter,
+    Schema,
+    reader::datum::GenericDatumReader,
+    schema::{RecordSchema, ResolvedSchema},
 };
 use guard::Limits;
 use magnus::{
-    DataTypeFunctions, Error, RArray, RModule, RString, Ruby, TypedData, Value, function, gc,
-    method, prelude::*, typed_data::Obj, value::Opaque,
+    DataTypeFunctions, Error, RArray, RModule, RString, Ruby, TryConvert, TypedData, Value,
+    function, gc, method,
+    prelude::*,
+    rb_sys::{AsRawValue, FromRawValue},
+    typed_data::Obj,
+    value::{Opaque, ReprValue},
 };
 use memory::HeapSize;
 use resolution::Resolution;
 use std::{
     collections::HashMap,
     ffi::c_void,
-    io::{self, Write},
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, OnceLock,
@@ -44,7 +48,6 @@ fn push_index(path: &mut String, index: usize) {
 struct Codec<'a> {
     schema: &'a Schema,
     resolved: ResolvedSchema<'a>,
-    writer: GenericDatumWriter<'a>,
     reader: GenericDatumReader<'a>,
 }
 
@@ -62,6 +65,8 @@ struct Core {
     id: u64,
     limits: Limits,
     fields: HashMap<String, usize>,
+    records: HashMap<usize, Vec<usize>>,
+    encoded_size: AtomicUsize,
     memory_size: usize,
     // Plans own no schemas, so reciprocal reader pairs cannot form Arc cycles.
     resolutions: [ResolutionSlot; 8],
@@ -118,18 +123,58 @@ pub(crate) fn error(ruby: &Ruby, class: &str, message: impl AsRef<str>) -> Error
     }
 }
 
+pub(crate) fn allocate<T: ReprValue + TryConvert>(make: impl FnOnce() -> T) -> Result<T, Error> {
+    let raw = magnus::rb_sys::protect(|| make().as_raw())?;
+    T::try_convert(unsafe { Value::from_raw(raw) })
+}
+
+pub(crate) fn wrap<T: TypedData>(ruby: &Ruby, data: T) -> Result<Obj<T>, Error> {
+    let class = T::class(ruby).as_raw();
+    let data_type = (T::data_type() as *const magnus::DataType).cast::<rb_sys::rb_data_type_t>();
+    let object = allocate(|| unsafe {
+        Value::from_raw(rb_sys::rb_data_typed_object_wrap(
+            class,
+            std::ptr::null_mut(),
+            data_type,
+        ))
+    })?;
+    #[allow(deprecated)]
+    unsafe {
+        (*(object.as_raw() as *mut rb_sys::RTypedData)).data = Box::into_raw(Box::new(data)).cast();
+    }
+    Obj::try_convert(object)
+}
+
+pub(crate) fn materialize(ruby: &Ruby, error: Error) -> Error {
+    let magnus::error::ErrorType::Error(class, message) = error.error_type() else {
+        return error;
+    };
+    let class = class.as_raw();
+    let exception = magnus::rb_sys::protect(|| unsafe {
+        let message = ruby.str_new(message).as_raw();
+        rb_sys::rb_class_new_instance(1, &message, class)
+    });
+    match exception.map(|raw| magnus::Exception::from_value(unsafe { Value::from_raw(raw) })) {
+        Ok(Some(exception)) => exception.into(),
+        Ok(None) => error,
+        Err(error) => error,
+    }
+}
+
 fn boundary<T>(
     ruby: &Ruby,
     class: &str,
     work: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
-    catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|_| {
-        Err(error(
-            ruby,
-            class,
-            "native codec rejected input after an internal panic",
-        ))
-    })
+    catch_unwind(AssertUnwindSafe(work))
+        .unwrap_or_else(|_| {
+            Err(error(
+                ruby,
+                class,
+                "native codec rejected input after an internal panic",
+            ))
+        })
+        .map_err(|error| materialize(ruby, error))
 }
 
 fn collect_fields(
@@ -170,6 +215,37 @@ fn collect_fields(
     Ok(())
 }
 
+fn collect_records(
+    schema: &Schema,
+    fields: &HashMap<String, usize>,
+    records: &mut HashMap<usize, Vec<usize>>,
+) {
+    match schema {
+        Schema::Record(record) => {
+            records
+                .entry(record as *const RecordSchema as usize)
+                .or_insert_with(|| {
+                    record
+                        .fields
+                        .iter()
+                        .map(|field| fields[&field.name])
+                        .collect()
+                });
+            for field in &record.fields {
+                collect_records(&field.schema, fields, records);
+            }
+        }
+        Schema::Array(array) => collect_records(&array.items, fields, records),
+        Schema::Map(map) => collect_records(&map.types, fields, records),
+        Schema::Union(union) => {
+            for schema in union.variants() {
+                collect_records(schema, fields, records);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Core {
     fn prepare(json: String, references: Vec<String>, limits: Limits) -> Result<Self, String> {
         let schemas = prepare::schemas(&json, &references, limits)?;
@@ -192,10 +268,6 @@ impl Core {
                 let wire_resolved =
                     ResolvedSchema::new_with_schemata(wire_schemas.iter().collect())
                         .map_err(|error| error.to_string())?;
-                let writer = GenericDatumWriter::builder(wire_schema)
-                    .resolved_schemata(wire_resolved.clone())
-                    .build()
-                    .map_err(|e| e.to_string())?;
                 let reader = GenericDatumReader::builder(wire_schema)
                     .resolved_writer_schemata(wire_resolved)
                     .build()
@@ -203,12 +275,15 @@ impl Core {
                 Ok::<_, String>(Codec {
                     schema,
                     resolved,
-                    writer,
                     reader,
                 })
             },
         }
         .try_build()?;
+        let mut records = HashMap::new();
+        for schema in prepared.borrow_schemas() {
+            collect_records(schema, &fields, &mut records);
+        }
         let resolved = &prepared.borrow_codec().resolved;
         let memory_size = size_of::<Self>()
             + 2 * size_of::<usize>()
@@ -217,12 +292,15 @@ impl Core {
             + prepared.borrow_schemas().heap_size()
             + prepared.borrow_wire_schemas().heap_size()
             + fields.heap_size()
+            + records.heap_size()
             + 3 * (resolved.get_names().heap_size() + size_of_val(resolved.get_schemata()));
         Ok(Self {
             prepared,
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             limits,
             fields,
+            records,
+            encoded_size: AtomicUsize::new(0),
             memory_size,
             resolutions: std::array::from_fn(|_| ResolutionSlot::default()),
         })
@@ -273,7 +351,10 @@ impl NativeSchema {
         let bytes = self.size();
         let previous = self.accounted.fetch_max(bytes, Ordering::Relaxed);
         if bytes > previous {
-            ruby.gc_adjust_memory_usage((bytes - previous) as isize);
+            let _ = magnus::rb_sys::protect(|| {
+                ruby.gc_adjust_memory_usage((bytes - previous) as isize);
+                ruby.qnil().as_raw()
+            });
         }
     }
 
@@ -320,10 +401,13 @@ impl NativeSchema {
             }
             let core = Core::prepare(json, owned_references, limits)
                 .map_err(|e| error(ruby, "SchemaError", e))?;
-            let keys = ruby.ary_new_capa(core.fields.len() * 2);
+            let keys = allocate(|| ruby.ary_new_capa(core.fields.len() * 2))?;
             for (name, &index) in &core.fields {
-                let key = ruby.str_new(name);
-                key.freeze();
+                let key = allocate(|| {
+                    let key = ruby.str_new(name);
+                    key.freeze();
+                    key
+                })?;
                 keys.store((index * 2) as isize, key)?;
                 let symbol: Value = key.funcall("to_sym", ())?;
                 keys.store((index * 2 + 1) as isize, symbol)?;
@@ -331,11 +415,14 @@ impl NativeSchema {
             keys.freeze();
             let ractor: magnus::RClass = ruby.class_object().const_get("Ractor")?;
             let keys: RArray = ractor.funcall("make_shareable", (keys,))?;
-            let schema = ruby.obj_wrap(Self {
-                core: Arc::new(core),
-                keys: keys.into(),
-                accounted: AtomicUsize::new(0),
-            });
+            let schema = wrap(
+                ruby,
+                Self {
+                    core: Arc::new(core),
+                    keys: keys.into(),
+                    accounted: AtomicUsize::new(0),
+                },
+            )?;
             schema.account_memory(ruby);
             Ok(schema)
         })
@@ -345,27 +432,14 @@ impl NativeSchema {
         ruby: &Ruby,
         this: &Self,
         value: Value,
-        release_gvl: bool,
+        _release_gvl: bool,
         graph: Option<RArray>,
     ) -> Result<RString, Error> {
         boundary(ruby, "EncodeError", || {
             let mapping = graph.map(mapping::Mapping::new).transpose()?;
-            let value =
+            let bytes =
                 convert::encode(ruby, &this.core, value, ruby.get_inner(this.keys), mapping)?;
-            let core = Arc::clone(&this.core);
-            let bytes = pure(ruby, release_gvl, "EncodeError", move || {
-                let mut output = BoundedWriter {
-                    bytes: Vec::new(),
-                    limit: core.limits.max_bytes,
-                };
-                core.prepared
-                    .borrow_codec()
-                    .writer
-                    .write_ser(&mut output, &wire::Datum(value))
-                    .map_err(|e| e.to_string())?;
-                Ok(output.bytes)
-            })?;
-            Ok(ruby.str_from_slice(&bytes))
+            allocate(|| ruby.str_from_slice(&bytes))
         })
     }
 
@@ -476,35 +550,6 @@ fn schema_text(ruby: &Ruby, value: RString, total: &mut usize) -> Result<String,
         .map_err(|e| error(ruby, "SchemaError", e.to_string()))
 }
 
-struct BoundedWriter {
-    bytes: Vec<u8>,
-    limit: usize,
-}
-
-impl Write for BoundedWriter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let end = self
-            .bytes
-            .len()
-            .checked_add(bytes.len())
-            .filter(|&n| n <= self.limit)
-            .ok_or_else(|| io::Error::other("encoded datum exceeds max_bytes"))?;
-        if end > self.bytes.capacity() {
-            let capacity = end
-                .max(self.bytes.capacity().saturating_mul(2))
-                .min(self.limit);
-            self.bytes
-                .try_reserve_exact(capacity - self.bytes.len())
-                .map_err(io::Error::other)?;
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 fn pure<T: Send, F: FnOnce() -> Result<T, String> + Send>(
     ruby: &Ruby,
     release: bool,
@@ -568,7 +613,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // Magnus's lazy class lookup can deadlock with Ruby GC across Ractor GVLs.
     NativeSchema::class(ruby);
     class.define_singleton_method("new", function!(NativeSchema::new, 5))?;
-    class.define_singleton_method("unchanged?", function!(schema_state::unchanged, 2))?;
+    class.define_singleton_method("unchanged?", function!(schema_state::unchanged, 1))?;
     class.define_method("encode", method!(NativeSchema::encode, 3))?;
     class.define_method("decode", method!(NativeSchema::decode, 5))?;
     Ok(())

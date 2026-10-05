@@ -109,7 +109,7 @@ schema = Avrocadabra::Schema.new('"long"')
 Ractor.new(schema) { |codec| codec.decode(codec.encode(42)) }.value # => 42
 ```
 
-`encode` and `decode` hold the GVL by default. `release_gvl: true` releases it for owned Rust work; Ruby conversions keep it. See [transition costs](benchmark/README.md).
+`encode` and `decode` hold the GVL by default. `release_gvl: true` releases it for decode's owned Rust work. Encode writes Avro bytes while it converts Ruby values, so it keeps the GVL. See [transition costs](benchmark/README.md).
 
 ## Build
 

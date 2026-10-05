@@ -32,6 +32,16 @@ RSpec.describe Avrocadabra::AvroTurf::Validation do
     end
   end
 
+  it "charges rejected union branches to the work budget" do
+    stub_const("Avrocadabra::Schema::MAX_ITEMS", 100)
+    branches = Array.new(20) { { "type" => "fixed", "name" => "Size#{it}", "size" => it + 1 } }
+    id = registry.register("fixed", reference_schema({ "type" => "array", "items" => branches }))
+    expect { native.encode(Array.new(10) { "x" * 20 }, schema_id: id) }.to raise_error(Avro::IO::AvroTypeError)
+    expect(native.encode(Array.new(2) { "x" * 20 }, schema_id: id)).to eq(reference.encode(Array.new(2) {
+      "x" * 20
+    }, schema_id: id))
+  end
+
   it "leaves stock validation and its exception unchanged" do
     stub_const("Avrocadabra::Schema::MAX_ITEMS", 100)
     counter = [0]

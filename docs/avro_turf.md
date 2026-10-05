@@ -29,9 +29,11 @@ The schema ID selects the writer; decode's `schema_name:` selects the reader. Me
 ## Contract
 
 - Same native reader/writer as `Avrocadabra::Schema`.
-- Field lookup: string keys, then symbols. Hash defaults, default procs and `key?`/`[]` overrides apply. Missing nullable fields become `nil`; missing required fields raise, even with writer defaults.
+- Field lookup: the schema's own field-name strings, then symbols, so `compare_by_identity` hashes behave as in Ruby Avro. Hash defaults, default procs and `key?`/`[]` overrides apply. Missing nullable fields become `nil`; missing required fields raise, even with writer defaults.
 - Records include `error` schemas and recursion. Exact field names beat aliases; later writer matches overwrite earlier ones.
 - Unions select the first valid branch. Ruby Avro adapters preserve logical mappings and nested exceptions. Decimal Floats work; excess scale raises `RangeError`.
+- Union branches resolve natively while a datum invokes no Ruby callbacks: shallow checks skip branches Ruby Avro rejects, then the first remaining branch converts once. Hash default procs, overridden lookups or iterators, custom or redefined adapters, date or timestamp values other than Integer, Float or `Time`, a redefined `Time#to_time`, and other value classes take Ruby Avro's validation path, so callbacks run as often as in Ruby Avro. Core methods redefined mid-call dispatch from the next value on.
+- Built-in decimal adapters encode natively, matching bigdecimal's `Float#to_d` digits, while their Ruby Avro and bigdecimal methods keep stock definitions and `BigDecimal.limit` is 0.
 - `each` and text `encode` overrides apply; enums use the original value for symbol lookup. Iterators must yield synchronously in the calling thread/fiber; retained encoding blocks expire after return.
 - Reader additions require explicit defaults. Ruby Avro materializes them, including its float, UTF-8 and nested-default quirks. Extra default keys are ignored.
 - Writer-union resolution preserves repeated adapter calls. Earlier adapters run before later resolution errors.
@@ -44,7 +46,7 @@ Registry/framing errors stay in AvroTurf. Codec errors use Ruby Avro classes or 
 
 ## Reuse
 
-Each client caches 128 prepared schemas; each writer caches eight reader plans. Schema mutation invalidates cached codecs, including edits to fields, symbols and defaults. Do not mutate schemas during a call.
+Each client caches 128 prepared schemas; each writer caches eight reader plans. Schema mutation invalidates cached codecs, including edits to fields, symbols and defaults, and replaced readers. Do not mutate schemas during a call.
 
 Cache access uses a mutex; codec work runs outside it. Routing is fiber-local and restored after nested calls/errors. Threads, interleaved fibers, GC compaction and fork reuse are tested. Registry clients retain their own thread/fork constraints.
 

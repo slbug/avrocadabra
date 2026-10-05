@@ -9,9 +9,7 @@ module Avrocadabra
         @source = source
         @state = SchemaState.new(source)
         @mapping = Mapping.new(source, @state.schemas)
-        document = source.to_avro
-        prepare_document(source, document)
-        @native = Schema.new(JSON.generate(document)).__send__(:native)
+        @native = Schema.new(JSON.generate(document(source, Set.new))).__send__(:native)
       rescue SchemaError => e
         raise ::Avro::SchemaParseError, e.message
       end
@@ -42,23 +40,27 @@ module Avrocadabra
 
       private
 
-      def prepare_document(source, document)
-        document.delete("logicalType") if document.is_a?(Hash)
-        case source.type_sym
-        when :record, :error
-          return if document.is_a?(String)
+      def document(schema, names)
+        result = case schema.type_sym
+                 when :record, :error
+                   named = ::Avro::Schema::NamedSchema.instance_method(:to_avro).bind_call(schema, names)
+                   return named unless named.is_a?(Hash)
 
-          source.fields.zip(document.fetch("fields")) do |field, entry|
-            entry["aliases"] = field.aliases if field.aliases
-            prepare_document(field.type, entry.fetch("type"))
-          end
-        when :array
-          prepare_document(source.items, document.fetch("items"))
-        when :map
-          prepare_document(source.values, document.fetch("values"))
-        when :union
-          source.schemas.zip(document) { |branch, entry| prepare_document(branch, entry) }
-        end
+                   named.merge("fields" => schema.fields.map { field_document(it, names) })
+                 when :array then { "type" => "array", "items" => document(schema.items, names) }
+                 when :map then { "type" => "map", "values" => document(schema.values, names) }
+                 when :union then return schema.schemas.map { document(it, names) }
+                 else schema.to_avro(names)
+                 end
+        result.delete("logicalType") if result.is_a?(Hash)
+        result
+      end
+
+      def field_document(field, names)
+        entry = { "name" => field.name, "type" => document(field.type, names) }
+        entry["default"] = field.default if field.default?
+        entry["aliases"] = field.aliases if field.aliases
+        entry
       end
 
       protected

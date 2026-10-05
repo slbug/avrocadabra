@@ -2,7 +2,7 @@
 
 Regenerate after dependency changes: `bundle exec rake package:licenses`. Duplicate texts appear once.
 
-Cargo.lock SHA-256: `ba50945b4445d8946b27d4f5204490cfa49896eeb0f18340a56ef80402c37ea7`.
+Cargo.lock SHA-256: `5dcb6ff82e5102de98dbb72687903dfadd5562fb4699ee40152759729ba10377`.
 
 Includes build and target-specific crates. Ruby gems ship their own licenses.
 
