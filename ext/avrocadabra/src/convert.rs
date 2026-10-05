@@ -27,7 +27,6 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
     let union: RClass = module.const_get("Union")?;
     let duration: RClass = module.const_get("Duration")?;
     let classes = Classes {
-        array: ruby.class_array().as_raw(),
         string: ruby.class_string().as_raw(),
         symbol: ruby.class_symbol().as_raw(),
         union: union.as_raw(),
@@ -71,7 +70,6 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
 }
 
 struct Classes {
-    array: VALUE,
     string: VALUE,
     symbol: VALUE,
     union: VALUE,
@@ -80,16 +78,13 @@ struct Classes {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Op {
-    Sequence,
-    Map,
+    Collection,
     Lookup,
     Text,
 }
 
 static EACH: LazyId = LazyId::new("each");
 static SIZE: LazyId = LazyId::new("size");
-static EACH_WITH_INDEX: LazyId = LazyId::new("each_with_index");
-static KEYS: LazyId = LazyId::new("keys");
 static KEY: LazyId = LazyId::new("key?");
 static AREF: LazyId = LazyId::new("[]");
 static DEFAULT: LazyId = LazyId::new("default");
@@ -98,20 +93,20 @@ static ENCODE: LazyId = LazyId::new("encode");
 static TO_S: LazyId = LazyId::new("to_s");
 static EQL: LazyId = LazyId::new("eql?");
 static EQUAL: LazyId = LazyId::new("==");
-static INDEX: LazyId = LazyId::new("index");
 
-static SEQUENCE: [&LazyId; 3] = [&EACH, &SIZE, &EACH_WITH_INDEX];
-static MAP: [&LazyId; 3] = [&EACH, &SIZE, &KEYS];
-static LOOKUP: [&LazyId; 4] = [&KEY, &AREF, &DEFAULT, &DEFAULT_PROC];
-static TEXT: [&LazyId; 2] = [&ENCODE, &TO_S];
+static COLLECTION: [&LazyId; 2] = [&EACH, &SIZE];
+static LOOKUP: [&LazyId; 2] = [&KEY, &AREF];
+static DEFAULTS: [&LazyId; 2] = [&DEFAULT, &DEFAULT_PROC];
+static TEXT: [&LazyId; 1] = [&ENCODE];
+static LABEL: [&LazyId; 1] = [&TO_S];
 
 impl Op {
-    fn methods(self) -> &'static [&'static LazyId] {
+    /// Methods the slow path calls publicly, then ones it reaches through private-capable calls.
+    fn methods(self) -> (&'static [&'static LazyId], &'static [&'static LazyId]) {
         match self {
-            Self::Sequence => &SEQUENCE,
-            Self::Map => &MAP,
-            Self::Lookup => &LOOKUP,
-            Self::Text => &TEXT,
+            Self::Collection => (&COLLECTION, &[]),
+            Self::Lookup => (&LOOKUP, &DEFAULTS),
+            Self::Text => (&TEXT, &LABEL),
         }
     }
 }
@@ -124,12 +119,23 @@ fn basic(class: VALUE, names: &[&LazyId]) -> bool {
     })
 }
 
+/// A private or protected core method refuses the public call its fast path stands in for.
+fn public(class: VALUE, names: &[&LazyId]) -> bool {
+    let ruby = unsafe { Ruby::get_unchecked() };
+    basic(class, names)
+        && names.iter().all(|name| unsafe {
+            rb_sys::rb_method_boundp(class, LazyId::get_inner_with(name, &ruby).as_raw(), 3) != 0
+        })
+}
+
 fn class_of(value: Value) -> Option<VALUE> {
     let raw = value.as_raw();
     (!rb_sys::SPECIAL_CONST_P(raw)).then(|| unsafe { (*(raw as *const rb_sys::RBasic)).klass })
 }
 
+/// `Float#to_d`'s digits of `|value|` and their decimal exponent.
 pub(crate) fn shortest_digits(value: f64) -> Option<(String, i64)> {
+    let value = value.abs();
     let text = format!("{value:e}");
     let (mantissa, exponent) = text.split_once('e')?;
     let exponent = exponent.parse::<i64>().ok()? + 1;
@@ -216,7 +222,8 @@ impl Encoder<'_, '_> {
         {
             return allowed;
         }
-        let allowed = basic(class, op.methods());
+        let (calls, reached) = op.methods();
+        let allowed = public(class, calls) && basic(class, reached);
         dispatch.push((class, op, allowed));
         allowed
     }
@@ -230,9 +237,7 @@ impl Encoder<'_, '_> {
             return core;
         }
         let c = &self.classes;
-        let core = basic(c.string, &[&EQL, &EQUAL])
-            && basic(c.symbol, &[&EQL])
-            && basic(c.array, &[&INDEX]);
+        let core = basic(c.string, &[&EQL, &EQUAL]) && basic(c.symbol, &[&EQL]);
         self.core.set(Some(core));
         core
     }
@@ -618,7 +623,7 @@ impl Encoder<'_, '_> {
             Schema::Array(array) => {
                 let values =
                     RArray::from_value(value).ok_or_else(|| self.fail("expected Array"))?;
-                let plain = self.plain(value, Op::Sequence);
+                let plain = self.plain(value, Op::Collection);
                 let length: usize = if plain {
                     values.len()
                 } else {
@@ -657,7 +662,7 @@ impl Encoder<'_, '_> {
             }
             Schema::Map(map) => {
                 let values = RHash::from_value(value).ok_or_else(|| self.fail("expected Hash"))?;
-                let plain = self.plain(value, Op::Map);
+                let plain = self.plain(value, Op::Collection);
                 let length: usize = if plain {
                     values.len()
                 } else {
@@ -924,7 +929,9 @@ mod tests {
     fn shortest_digits_round_halfway_ties_to_even_like_ruby_dtoa() {
         for (value, digits, exponent) in [
             (920_013_567_207_072.2, "9200135672070722", 15),
+            (-920_013_567_207_072.2, "9200135672070722", 15),
             (97_404_494_744_092.62, "9740449474409262", 14),
+            (-97_404_494_744_092.62, "9740449474409262", 14),
             (0.9524, "9524", 0),
             (2.5, "25", 1),
             (1e23, "1", 24),

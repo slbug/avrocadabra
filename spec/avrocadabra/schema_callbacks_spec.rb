@@ -61,6 +61,16 @@ RSpec.describe Avrocadabra::Schema do
     expect(JSON.parse(output)).to eq("id" => 7, "items" => [10], "index" => { "changed" => 20 }, "label" => "changed")
   end
 
+  it "refuses core methods made private or protected after load" do
+    output, errors, status = ruby_fixture("private_core.rb")
+    expect(status.success?).to be(true), errors
+    expect(JSON.parse(output)).to eq(["private method 'each' called for an instance of Array",
+                                      "protected method 'size' called for an instance of Array",
+                                      "private method 'each' called for an instance of Hash",
+                                      "private method 'key?' called for an instance of Hash",
+                                      "private method 'encode' called for an instance of String"])
+  end
+
   %w[time float decimal].each do |conversion|
     it "dispatches core methods that a #{conversion} logical conversion redefines" do
       output, errors, status = ruby_fixture("redefined_by_conversion.rb", conversion)

@@ -1534,7 +1534,7 @@ impl<'a> Writer<'a> {
             if float == 0.0 {
                 return Ok(Some((false, "0".into(), 0)));
             }
-            let Some((mut digits, exponent)) = shortest_digits(float.abs()) else {
+            let Some((mut digits, exponent)) = shortest_digits(float) else {
                 return Ok(None);
             };
             digits.truncate(16);
