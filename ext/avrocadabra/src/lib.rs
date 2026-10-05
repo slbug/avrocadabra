@@ -8,6 +8,7 @@ mod memory;
 mod prepare;
 mod resolution;
 mod schema_state;
+mod stock;
 mod validation;
 mod wire;
 
@@ -433,12 +434,9 @@ impl NativeSchema {
         this: &Self,
         value: Value,
         _release_gvl: bool,
-        graph: Option<RArray>,
     ) -> Result<RString, Error> {
         boundary(ruby, "EncodeError", || {
-            let mapping = graph.map(mapping::Mapping::new).transpose()?;
-            let bytes =
-                convert::encode(ruby, &this.core, value, ruby.get_inner(this.keys), mapping)?;
+            let bytes = convert::encode(ruby, &this.core, value, ruby.get_inner(this.keys))?;
             allocate(|| ruby.str_from_slice(&bytes))
         })
     }
@@ -614,8 +612,43 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     NativeSchema::class(ruby);
     class.define_singleton_method("new", function!(NativeSchema::new, 5))?;
     class.define_singleton_method("unchanged?", function!(schema_state::unchanged, 1))?;
-    class.define_method("encode", method!(NativeSchema::encode, 3))?;
+    class.define_method("encode", method!(NativeSchema::encode, 2))?;
     class.define_method("decode", method!(NativeSchema::decode, 5))?;
+    class.define_singleton_method("bump", function!(stock::bump, 0))?;
+    class.define_singleton_method("codecs", function!(stock::codecs, 0))?;
+    class.define_singleton_method("codecs=", function!(stock::set_codecs, 1))?;
+    let plans = class.define_class("Plans", ruby.class_object())?;
+    stock::Plans::class(ruby);
+    plans.define_singleton_method("new", function!(stock::new_plans, 0))?;
+    class
+        .define_module("Writer")?
+        .define_method("write", method!(stock::write, 2))?;
+    let budget = class.define_module("Budget")?;
+    budget.define_method("validate!", method!(stock::validate_bang, -1))?;
+    budget.define_private_method("validate_recursive", method!(stock::validate_recursive, -1))?;
+    let hooks = class.define_module("Hooks")?;
+    for name in [
+        "public",
+        "private",
+        "protected",
+        "module_function",
+        "method_added",
+        "method_removed",
+        "method_undefined",
+        "singleton_method_added",
+        "singleton_method_removed",
+        "singleton_method_undefined",
+        "const_added",
+    ] {
+        hooks.define_private_method(name, method!(stock::hook, -1))?;
+    }
+    for name in ["public_class_method", "private_class_method"] {
+        hooks.define_method(name, method!(stock::hook, -1))?;
+    }
+    for name in ["append_features", "prepend_features", "extend_object"] {
+        hooks.define_private_method(name, method!(stock::mixin, -1))?;
+    }
+    stock::set_hooks(hooks.as_value());
     Ok(())
 }
 

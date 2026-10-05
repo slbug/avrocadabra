@@ -110,6 +110,17 @@ RSpec.describe Avrocadabra::AvroTurf::Codec do
     writer&.close unless writer&.closed?
   end
 
+  it "encodes natively without Ruby Avro validation" do
+    definition = ["null", record_schema("Item", [field("id", "long")])]
+    codec = described_class.new(reference_schema(definition))
+    validations = 0
+    bytes = TracePoint.new(:call) { validations += 1 }.enable(target: Avro::Schema.method(:validate)) do
+      codec.encode({ "id" => 1 })
+    end
+    expect(bytes).to eq(reference_encode(definition, { "id" => 1 }))
+    expect(validations).to eq(0)
+  end
+
   context "with a prepared native codec" do
     let(:native) { instance_spy(Avrocadabra::NativeSchema) }
     let(:prepared) { instance_double(Avrocadabra::Schema, native: native) }
@@ -117,9 +128,9 @@ RSpec.describe Avrocadabra::AvroTurf::Codec do
 
     before { allow(Avrocadabra::Schema).to receive(:new).and_return(prepared) }
 
-    it "retains the GVL for Messaging encoding" do
-      codec.encode(42)
-      expect(native).to have_received(:encode).with(42, false, kind_of(Array))
+    it "encodes through Ruby Avro's writer instead of the standalone codec" do
+      expect(codec.encode(42)).to eq(reference_encode("long", 42))
+      expect(native).not_to have_received(:encode)
     end
 
     it "retains the GVL and unwraps unions for Messaging decoding" do

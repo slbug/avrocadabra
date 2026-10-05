@@ -12,7 +12,7 @@ messaging = Avrocadabra::AvroTurf::Messaging.new(**existing_options)
 
 Keep `avro_turf` and existing encode/decode calls. Bundler loads Avrocadabra; Zeitwerk loads the integration on constant access. Either require order works. No initializer or flags.
 
-AvroTurf keeps framing, registry access, authentication, registration, subjects, IDs, versions and schema caches. The integration prepends datum routing, bounded validation and Ractor support. Stock `AvroTurf::Messaging` keeps Ruby codecs; standalone Avrocadabra needs no AvroTurf.
+AvroTurf keeps framing, registry access, authentication, registration, subjects, IDs, versions and schema caches. The integration prepends datum routing, a native `DatumWriter#write`, bounded validation, Ractor support and frozen definition hooks: on `Module`, and on the singleton classes of Ruby Avro, core and bigdecimal classes and their ancestors. Stock `AvroTurf::Messaging` keeps Ruby codecs; standalone Avrocadabra needs no AvroTurf.
 
 ```ruby
 payload = messaging.encode({ "id" => 42, "reading" => BigDecimal("12.34") }, schema_name: "Sample")
@@ -28,12 +28,16 @@ The schema ID selects the writer; decode's `schema_name:` selects the reader. Me
 
 ## Contract
 
-- Same native reader/writer as `Avrocadabra::Schema`.
-- Field lookup: the schema's own field-name strings, then symbols, so `compare_by_identity` hashes behave as in Ruby Avro. Hash defaults, default procs and `key?`/`[]` overrides apply. Missing nullable fields become `nil`; missing required fields raise, even with writer defaults.
+- Decode: the native reader of `Avrocadabra::Schema`.
+- Encode: Ruby Avro's `DatumWriter#write`, emulated call site by call site. Unobservable calls into load-time Ruby Avro, bigdecimal or core methods are skipped; the rest keep Ruby Avro's receiver, arguments, visibility, order and lexical constants, after buffered bytes reach the stream. Bytes, return values, callback counts and exceptions match.
+- Verification is cached per definition epoch. Native hooks on `Module`, ahead of each hooked ancestry's own singleton methods, bump it on definition, removal, visibility, mixin and constant changes, so a `method_added` without `super` hides nothing. Class-variable and constant-cache counters cover the rest. A module prepended ahead of a hook disables the cache for the process.
+- After every callback, readers, ivars, constants and value classes are rechecked; steps the plan no longer covers run in Ruby. Mid-call schema mutation and a `raise` that returns behave as in Ruby Avro.
+- Union branches are tried natively; a `validate_recursive`-equivalent walk confirms rejections, and anything observable restarts selection through `Schema.validate`.
+- Built-in decimal adapters encode natively while `BigDecimal.limit` is 0, matching bigdecimal's `Float#to_d` digits. Precision errors replay the adapter in Ruby.
+- Out of scope: C extensions, `Module` visibility originals captured before load or reached through `super_method`, TracePoint, allocation counts, backtraces.
+- Field lookup: string keys, then symbols. Hash defaults, default procs and `key?`/`[]` overrides apply. Missing nullable fields become `nil`; missing required fields raise, even with writer defaults.
 - Records include `error` schemas and recursion. Exact field names beat aliases; later writer matches overwrite earlier ones.
 - Unions select the first valid branch. Ruby Avro adapters preserve logical mappings and nested exceptions. Decimal Floats work; excess scale raises `RangeError`.
-- Union branches resolve natively while a datum invokes no Ruby callbacks: shallow checks skip branches Ruby Avro rejects, then the first remaining branch converts once. Hash default procs, overridden lookups or iterators, custom or redefined adapters, date or timestamp values other than Integer, Float or `Time`, a redefined `Time#to_time`, and other value classes take Ruby Avro's validation path, so callbacks run as often as in Ruby Avro. Core methods redefined mid-call dispatch from the next value on.
-- Built-in decimal adapters encode natively, matching bigdecimal's `Float#to_d` digits, while their Ruby Avro and bigdecimal methods keep stock definitions and `BigDecimal.limit` is 0.
 - `each` and text `encode` overrides apply; enums use the original value for symbol lookup. Iterators must yield synchronously in the calling thread/fiber; retained encoding blocks expire after return.
 - Reader additions require explicit defaults. Ruby Avro materializes them, including its float, UTF-8 and nested-default quirks. Extra default keys are ignored.
 - Writer-union resolution preserves repeated adapter calls. Earlier adapters run before later resolution errors.
@@ -42,11 +46,11 @@ The schema ID selects the writer; decode's `schema_name:` selects the reader. Me
 - Decode consumes one datum, leaving trailing bytes unread. Failed native reads preserve the cursor, including adapter failures.
 - Bounds: 16 MiB, 64 levels, 1,000,000 value/search nodes. Rejected union branches consume the work budget. `validate: true` retains Ruby Avro's rules and extra-field checks, with bounded recursive validation.
 
-Registry/framing errors stay in AvroTurf. Codec errors use Ruby Avro classes or `EOFError`; messages, malformed-input rejection and failure cursor behavior may differ. Bounds reject some inputs stock Avro accepts. Native failures never retry through Ruby.
+Registry/framing errors stay in AvroTurf. Encode errors are Ruby Avro's own; bounds raise `Avro::IO::AvroTypeError` caused by `Avrocadabra::EncodeError`. Decode errors use Ruby Avro classes or `EOFError`; messages, malformed-input rejection and failure cursor behavior may differ. Bounds reject some inputs stock Avro accepts. Native failures never retry through Ruby.
 
 ## Reuse
 
-Each client caches 128 prepared schemas; each writer caches eight reader plans. Schema mutation invalidates cached codecs, including edits to fields, symbols and defaults, and replaced readers. Do not mutate schemas during a call.
+Each client caches 128 prepared schemas and 128 write plans; each writer caches eight reader plans. Schema mutation invalidates cached codecs and plans, including edits to fields, symbols and defaults, and replaced readers. Do not mutate schemas during a decode.
 
 Cache access uses a mutex; codec work runs outside it. Routing is fiber-local and restored after nested calls/errors. Threads, interleaved fibers, GC compaction and fork reuse are tested. Registry clients retain their own thread/fork constraints.
 

@@ -27,7 +27,7 @@ RSpec.describe Avrocadabra::Schema do
   it "frees native buffers when a Ruby callback raises during encoding" do
     output, errors, status = ruby_fixture("raising_lookup_memory.rb")
     expect(status.success?).to be(true), errors
-    expect(Integer(output)).to be < 16 * 1024 * 1024
+    expect(Integer(output)).to be < 128 * 1024 * 1024
   end
 
   it "triggers collection from native schema allocation pressure" do

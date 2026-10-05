@@ -236,9 +236,12 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     datum = { "a" => { reading: 1, flags: ["raw", { code: "x", factor: BigDecimal("0.9524"), seen: Time.at(1) }] },
               "b" => { reading: 2, flags: nil } }
     expect_compatible(definition, datum)
-    allow(Avro::Schema).to receive(:validate).and_call_original
-    native.encode(datum, schema_id: registry.register("values", reference_schema(definition)))
-    expect(Avro::Schema).not_to have_received(:validate)
+    validations = 0
+    trace = TracePoint.new(:call) { validations += 1 }
+    trace.enable(target: Avro::Schema.method(:validate)) do
+      native.encode(datum, schema_id: registry.register("values", reference_schema(definition)))
+    end
+    expect(validations).to eq(0)
   end
 
   it "preserves defaults on hashes, nullable omissions and string-key precedence" do

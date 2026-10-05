@@ -1,11 +1,4 @@
-use crate::{
-    Core,
-    big_decimal::write_long,
-    error,
-    guard::Limits,
-    mapping::{self, Mapping},
-    namespace,
-};
+use crate::{Core, big_decimal::write_long, error, guard::Limits, namespace};
 use apache_avro::{
     Schema,
     schema::{InnerDecimalSchema, NamesRef, NamespaceRef, RecordSchema, UuidSchema},
@@ -16,7 +9,7 @@ use magnus::{
     prelude::*,
     r_hash::ForEach,
     rb_sys::{AsRawId, AsRawValue, FromRawValue},
-    value::{Id, IntoId, LazyId},
+    value::{Id, LazyId},
 };
 use num_bigint::BigInt;
 use rb_sys::VALUE;
@@ -27,31 +20,17 @@ use std::{
     sync::atomic::Ordering,
 };
 
-pub fn encode(
-    ruby: &Ruby,
-    core: &Core,
-    value: Value,
-    keys: RArray,
-    mapping: Option<Mapping>,
-) -> Result<Vec<u8>, Error> {
+pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Vec<u8>, Error> {
     let module = namespace(ruby)?;
     let codec = core.prepared.borrow_codec();
     let decimal: RClass = ruby.class_object().const_get("BigDecimal")?;
     let date: RClass = ruby.class_object().const_get("Date")?;
-    let date_time: RClass = ruby.class_object().const_get("DateTime")?;
     let union: RClass = module.const_get("Union")?;
     let duration: RClass = module.const_get("Duration")?;
     let classes = Classes {
         array: ruby.class_array().as_raw(),
         string: ruby.class_string().as_raw(),
         symbol: ruby.class_symbol().as_raw(),
-        integer: ruby.class_integer().as_raw(),
-        float: ruby.class_float().as_raw(),
-        rational: ruby.class_rational().as_raw(),
-        time: ruby.class_time().as_raw(),
-        decimal: decimal.as_raw(),
-        date: date.as_raw(),
-        date_time: date_time.as_raw(),
         union: union.as_raw(),
         duration: duration.as_raw(),
     };
@@ -71,7 +50,6 @@ pub fn encode(
         duration,
         decimal,
         date,
-        error_class: module.const_get("EncodeError")?,
         hash_key: ruby.intern("key?"),
         hash_read: ruby.intern("[]"),
         encode: ruby.intern("encode"),
@@ -81,13 +59,8 @@ pub fn encode(
         classes,
         dispatch: RefCell::new(Vec::new()),
         core: Cell::new(None),
-        decimals: Cell::new(None),
-        modules: RefCell::new(Vec::new()),
-        unlimited: Cell::new(None),
-        bytes_decimal: Cell::new(None),
-        speculating: false,
     };
-    ctx.value(codec.schema, None, value, 0, mapping)?;
+    ctx.value(codec.schema, None, value, 0)?;
     if ctx.out.len() > core.limits.max_bytes {
         return Err(error(
             ruby,
@@ -103,13 +76,6 @@ struct Classes {
     array: VALUE,
     string: VALUE,
     symbol: VALUE,
-    integer: VALUE,
-    float: VALUE,
-    rational: VALUE,
-    time: VALUE,
-    decimal: VALUE,
-    date: VALUE,
-    date_time: VALUE,
     union: VALUE,
     duration: VALUE,
 }
@@ -120,7 +86,6 @@ enum Op {
     Map,
     Lookup,
     Text,
-    Validate,
 }
 
 static EACH: LazyId = LazyId::new("each");
@@ -133,35 +98,14 @@ static DEFAULT: LazyId = LazyId::new("default");
 static DEFAULT_PROC: LazyId = LazyId::new("default_proc");
 static ENCODE: LazyId = LazyId::new("encode");
 static TO_S: LazyId = LazyId::new("to_s");
-static IS_A: LazyId = LazyId::new("is_a?");
-static NIL: LazyId = LazyId::new("nil?");
-static CLASS: LazyId = LazyId::new("class");
-static INSPECT: LazyId = LazyId::new("inspect");
-static RESPOND_TO: LazyId = LazyId::new("respond_to?");
 static EQL: LazyId = LazyId::new("eql?");
 static EQUAL: LazyId = LazyId::new("==");
 static INDEX: LazyId = LazyId::new("index");
-static AND: LazyId = LazyId::new("&");
-static SHIFT: LazyId = LazyId::new(">>");
-static TIMES: LazyId = LazyId::new("*");
-static MINUS: LazyId = LazyId::new("-");
-static PLUS: LazyId = LazyId::new("+");
-static DIVIDE: LazyId = LazyId::new("/");
-static GREATER: LazyId = LazyId::new(">");
-static TO_I: LazyId = LazyId::new("to_i");
-static UNSHIFT: LazyId = LazyId::new("unshift");
-static FIRST: LazyId = LazyId::new("first");
-static PACK: LazyId = LazyId::new("pack");
-static LENGTH: LazyId = LazyId::new("length");
-static FREEZE: LazyId = LazyId::new("freeze");
-static USEC: LazyId = LazyId::new("usec");
-static NSEC: LazyId = LazyId::new("nsec");
 
 static SEQUENCE: [&LazyId; 3] = [&EACH, &SIZE, &EACH_WITH_INDEX];
 static MAP: [&LazyId; 3] = [&EACH, &SIZE, &KEYS];
 static LOOKUP: [&LazyId; 4] = [&KEY, &AREF, &DEFAULT, &DEFAULT_PROC];
 static TEXT: [&LazyId; 2] = [&ENCODE, &TO_S];
-static VALIDATE: [&LazyId; 5] = [&IS_A, &NIL, &CLASS, &INSPECT, &RESPOND_TO];
 
 impl Op {
     fn methods(self) -> &'static [&'static LazyId] {
@@ -170,7 +114,6 @@ impl Op {
             Self::Map => &MAP,
             Self::Lookup => &LOOKUP,
             Self::Text => &TEXT,
-            Self::Validate => &VALIDATE,
         }
     }
 }
@@ -178,7 +121,8 @@ impl Op {
 fn basic(class: VALUE, names: &[&LazyId]) -> bool {
     let ruby = unsafe { Ruby::get_unchecked() };
     names.iter().all(|name| unsafe {
-        rb_sys::rb_method_basic_definition_p(class, (***name).into_id_with(&ruby).as_raw()) != 0
+        rb_sys::rb_method_basic_definition_p(class, LazyId::get_inner_with(name, &ruby).as_raw())
+            != 0
     })
 }
 
@@ -187,7 +131,7 @@ fn class_of(value: Value) -> Option<VALUE> {
     (!rb_sys::SPECIAL_CONST_P(raw)).then(|| unsafe { (*(raw as *const rb_sys::RBasic)).klass })
 }
 
-fn shortest_digits(value: f64) -> Option<(String, i64)> {
+pub(crate) fn shortest_digits(value: f64) -> Option<(String, i64)> {
     let text = format!("{value:e}");
     let (mantissa, exponent) = text.split_once('e')?;
     let exponent = exponent.parse::<i64>().ok()? + 1;
@@ -254,7 +198,6 @@ struct Encoder<'a, 's> {
     duration: RClass,
     decimal: RClass,
     date: RClass,
-    error_class: magnus::ExceptionClass,
     hash_key: Id,
     hash_read: Id,
     encode: Id,
@@ -264,11 +207,6 @@ struct Encoder<'a, 's> {
     classes: Classes,
     dispatch: RefCell<Vec<(VALUE, Op, bool)>>,
     core: Cell<Option<bool>>,
-    decimals: Cell<Option<bool>>,
-    modules: RefCell<Vec<(VALUE, bool)>>,
-    unlimited: Cell<Option<bool>>,
-    bytes_decimal: Cell<Option<VALUE>>,
-    speculating: bool,
 }
 
 impl Encoder<'_, '_> {
@@ -301,211 +239,15 @@ impl Encoder<'_, '_> {
         core
     }
 
-    fn trusted(&self, value: Value) -> bool {
-        let Some(class) = class_of(value) else {
-            return true;
-        };
-        let c = &self.classes;
-        if [c.decimal, c.date, c.date_time, c.time].contains(&class) {
-            return true;
-        }
-        (RString::from_value(value).is_some()
-            || RArray::from_value(value).is_some()
-            || RHash::from_value(value).is_some()
-            || integer(value)
-            || float(value)
-            || magnus::Symbol::from_value(value).is_some())
-            && self.allows(class, Op::Validate)
-    }
-
     fn refresh(&self) {
         self.dispatch.borrow_mut().clear();
         self.core.set(None);
-        self.decimals.set(None);
-        self.modules.borrow_mut().clear();
-        self.unlimited.set(None);
-    }
-
-    fn bytes_decimal(&self) -> Result<VALUE, Error> {
-        if let Some(class) = self.bytes_decimal.get() {
-            return Ok(class);
-        }
-        let logical: RModule = self
-            .ruby
-            .class_object()
-            .const_get::<_, RModule>("Avro")?
-            .const_get("LogicalTypes")?;
-        let class = logical.const_get::<_, RClass>("BytesDecimal")?.as_raw();
-        self.bytes_decimal.set(Some(class));
-        Ok(class)
-    }
-
-    fn cached(
-        cell: &Cell<Option<bool>>,
-        check: impl FnOnce() -> Result<bool, Error>,
-    ) -> Result<bool, Error> {
-        if let Some(value) = cell.get() {
-            return Ok(value);
-        }
-        let value = check()?;
-        cell.set(Some(value));
-        Ok(value)
-    }
-
-    fn decimal_adapter(&self, mapping: Mapping) -> Result<bool, Error> {
-        Ok(class_of(mapping.adapter()) == Some(self.bytes_decimal()?))
-    }
-
-    fn stock_adapter(&self, mapping: Mapping, value: Value) -> Result<bool, Error> {
-        if !mapping.builtin() {
-            return Ok(false);
-        }
-        if self.decimal_adapter(mapping)? {
-            let c = &self.classes;
-            return Self::cached(&self.decimals, || {
-                Ok(basic(
-                    c.integer,
-                    &[&AND, &SHIFT, &AREF, &EQUAL, &TIMES, &MINUS, &GREATER, &TO_I],
-                ) && basic(c.array, &[&UNSHIFT, &FIRST, &PACK])
-                    && basic(c.string, &[&LENGTH, &FREEZE])
-                    && mapping.native_decimal()?)
-            });
-        }
-        let c = &self.classes;
-        let class = class_of(value).unwrap_or_else(|| value.class().as_raw());
-        if let Some(&(_, stock)) = self.modules.borrow().iter().find(|entry| entry.0 == class) {
-            return Ok(stock);
-        }
-        let stock = basic(c.integer, &[&TO_I, &TIMES, &PLUS, &DIVIDE])
-            && basic(c.float, &[&TO_I])
-            && basic(c.rational, &[&TO_I])
-            && basic(c.time, &[&TO_I, &USEC, &NSEC])
-            && mapping.stock_modules(unsafe { Value::from_raw(class) })?;
-        self.modules.borrow_mut().push((class, stock));
-        Ok(stock)
-    }
-
-    fn native_decimal(&self, mapping: Mapping, value: Value) -> Result<Option<Vec<u8>>, Error> {
-        if !self.decimal_adapter(mapping)? {
-            return Ok(None);
-        }
-        let decimal = self.decimal;
-        let unlimited = Self::cached(&self.unlimited, || {
-            let limit: Value = decimal.funcall("limit", ())?;
-            Ok(magnus::Fixnum::from_value(limit).is_some_and(|limit| limit.to_i64() == 0))
-        })?;
-        if !unlimited {
-            return Ok(None);
-        }
-        let adapter = mapping.adapter();
-        let Some((negative, digits, exponent)) = self.decimal_parts(value)? else {
-            return Ok(None);
-        };
-        let ivar = |name: &str| unsafe {
-            let id = rb_sys::rb_intern2(name.as_ptr().cast(), name.len() as _);
-            magnus::Fixnum::from_value(Value::from_raw(rb_sys::rb_ivar_get(adapter.as_raw(), id)))
-                .map(|value| value.to_i64())
-        };
-        let (Some(precision), Some(scale)) = (ivar("@precision"), ivar("@scale")) else {
-            return Ok(None);
-        };
-        let length = digits.len() as i64;
-        let fractional = length - exponent;
-        if fractional > scale {
-            return Err(Error::new(
-                self.ruby.exception_range_error(),
-                "Rounding necessary",
-            ));
-        }
-        if length > precision || exponent > precision - scale {
-            return Err(Error::new(
-                self.ruby.exception_range_error(),
-                "Precision is too small",
-            ));
-        }
-        let mut unscaled = String::with_capacity(digits.len() + (scale - fractional) as usize + 1);
-        if negative && digits != "0" {
-            unscaled.push('-');
-        }
-        unscaled.push_str(&digits);
-        unscaled.extend(std::iter::repeat_n('0', (scale - fractional) as usize));
-        Ok(
-            BigInt::parse_bytes(unscaled.as_bytes(), 10)
-                .map(|integer| integer.to_signed_bytes_be()),
-        )
-    }
-
-    fn decimal_parts(&self, value: Value) -> Result<Option<(bool, String, i64)>, Error> {
-        if let Some(float) = magnus::Float::from_value(value) {
-            let float = float.to_f64();
-            if !float.is_finite() {
-                return Ok(None);
-            }
-            if float == 0.0 {
-                return Ok(Some((false, "0".into(), 0)));
-            }
-            let Some((mut digits, exponent)) = shortest_digits(float.abs()) else {
-                return Ok(None);
-            };
-            digits.truncate(16);
-            let digits = digits.trim_end_matches('0');
-            return Ok(Some((float < 0.0, digits.into(), exponent)));
-        }
-        if let Some(integer) = magnus::Fixnum::from_value(value) {
-            let integer = integer.to_i64();
-            if integer == 0 {
-                return Ok(Some((false, "0".into(), 0)));
-            }
-            let text = (integer as i128).unsigned_abs().to_string();
-            let exponent = text.len() as i64;
-            return Ok(Some((
-                integer < 0,
-                text.trim_end_matches('0').into(),
-                exponent,
-            )));
-        }
-        if class_of(value) != Some(self.classes.decimal) {
-            return Ok(None);
-        }
-        let parts: RArray = value.funcall("split", ())?;
-        let (Some(sign), Some(digits), Some(exponent)) = (
-            magnus::Fixnum::from_value(parts.entry(0)?),
-            RString::from_value(parts.entry(1)?),
-            magnus::Fixnum::from_value(parts.entry(3)?),
-        ) else {
-            return Ok(None);
-        };
-        let digits = unsafe { digits.as_slice() };
-        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-            return Ok(None);
-        }
-        let digits = String::from_utf8_lossy(digits).into_owned();
-        Ok(Some((sign.to_i64() < 0, digits, exponent.to_i64())))
-    }
-
-    fn adapter_value(&mut self, mapping: Mapping, value: Value) -> Result<Value, Error> {
-        if let Some(bytes) = self.native_decimal(mapping, value)? {
-            let text = crate::allocate(|| {
-                let text = self.ruby.str_from_slice(&bytes);
-                text.freeze();
-                text
-            })?;
-            return Ok(text.as_value());
-        }
-        mapping.convert(self.encode, value)
-    }
-
-    fn abort(&self) -> Error {
-        self.fail("union attempt reached a Ruby callback")
     }
 
     fn callback<T>(
         &mut self,
         call: impl FnOnce(&mut Self) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        if self.speculating {
-            return Err(self.abort());
-        }
         let result = call(self);
         self.refresh();
         result
@@ -585,14 +327,6 @@ impl Encoder<'_, '_> {
 
     fn overflowed(&self) -> bool {
         self.out.len() > self.limits.max_bytes
-    }
-
-    fn charge_work(&mut self) -> Result<(), Error> {
-        self.work += 1;
-        if self.work > self.limits.max_items {
-            return Err(self.fail("union search exceeds maximum item count"));
-        }
-        Ok(())
     }
 
     fn integer(&self, value: Value) -> Result<i64, Error> {
@@ -725,176 +459,12 @@ impl Encoder<'_, '_> {
         })
     }
 
-    fn admits(&self, schema: &Schema, ns: NamespaceRef<'_>, value: Value) -> Result<bool, Error> {
-        Ok(match self.resolved(schema, ns)? {
-            Schema::Null => value.is_nil(),
-            Schema::Boolean => boolean(value),
-            Schema::Int => {
-                integer(value)
-                    && i64::try_convert(value).is_ok_and(|value| i32::try_from(value).is_ok())
-            }
-            Schema::Long => integer(value) && i64::try_convert(value).is_ok(),
-            Schema::Float | Schema::Double => {
-                float(value) || integer(value) || value.is_kind_of(self.decimal)
-            }
-            Schema::String | Schema::Bytes => RString::from_value(value).is_some(),
-            Schema::Fixed(fixed) => {
-                RString::from_value(value).is_some_and(|value| value.len() == fixed.size)
-            }
-            Schema::Array(_) => RArray::from_value(value).is_some(),
-            Schema::Map(_) | Schema::Record(_) => RHash::from_value(value).is_some(),
-            _ => true,
-        })
-    }
-
-    fn adapt(&mut self, mapping: Mapping, value: Value) -> Result<Value, Error> {
-        if mapping.identity() {
-            return Ok(value);
-        }
-        if self.trusted(value) && self.stock_adapter(mapping, value)? {
-            return self.adapter_value(mapping, value);
-        }
-        self.callback(|this| mapping.convert(this.encode, value))
-    }
-
-    fn union_candidate(
-        &mut self,
-        variants: &[Schema],
-        ns: NamespaceRef<'_>,
-        value: Value,
-        mapping: Mapping,
-    ) -> Result<Option<(usize, Value)>, Error> {
-        for (index, schema) in variants.iter().enumerate() {
-            self.charge_work()?;
-            if matches!(self.resolved(schema, ns)?, Schema::Null) {
-                if value.is_nil() {
-                    return Ok(Some((index, value)));
-                }
-                continue;
-            }
-            let child = mapping.child(index)?;
-            let datum = if child.identity() {
-                value
-            } else if self.stock_adapter(child, value)? {
-                match self.adapter_value(child, value) {
-                    Ok(datum) => datum,
-                    Err(error) if error.is_kind_of(self.ruby.exception_standard_error()) => {
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                }
-            } else {
-                return Err(self.abort());
-            };
-            if self.admits(schema, ns, datum)? {
-                return Ok(Some((index, datum)));
-            }
-        }
-        Ok(None)
-    }
-
-    fn union_attempt(
-        &mut self,
-        variants: &[Schema],
-        ns: NamespaceRef<'_>,
-        value: Value,
-        depth: usize,
-        mapping: Mapping,
-    ) -> Result<bool, Error> {
-        let Some((index, datum)) = self.union_candidate(variants, ns, value, mapping)? else {
-            return Ok(false);
-        };
-        self.emit_long(index as i64);
-        let child = Some(mapping.child(index)?);
-        self.adapted_value(&variants[index], ns, datum, depth, child)?;
-        Ok(true)
-    }
-
-    fn validated_union_index(
-        &mut self,
-        value: Value,
-        mapping: Mapping,
-        depth: usize,
-    ) -> Result<usize, Error> {
-        let budget = crate::allocate(|| self.ruby.ary_new_capa(2))?;
-        budget.push(self.limits.max_items.saturating_sub(self.work))?;
-        budget.push(self.limits.max_depth.saturating_sub(depth) + 1)?;
-        let index = self.callback(|_| mapping.union_index(value, budget));
-        let remaining: i64 = budget.entry(0)?;
-        self.work = self
-            .limits
-            .max_items
-            .saturating_add_signed(-(remaining as isize));
-        index
-    }
-
-    fn mapped_union(
-        &mut self,
-        variants: &[Schema],
-        ns: NamespaceRef<'_>,
-        value: Value,
-        depth: usize,
-        mapping: Mapping,
-    ) -> Result<(), Error> {
-        let outer = self.speculating;
-        if self.trusted(value) {
-            let (items, bytes, path_len, out_len) =
-                (self.items, self.bytes, self.path.len(), self.out.len());
-            self.speculating = true;
-            let attempt = self.union_attempt(variants, ns, value, depth, mapping);
-            self.speculating = outer;
-            match attempt {
-                Ok(true) => return Ok(()),
-                Err(error)
-                    if self.work > self.limits.max_items
-                        || self.overflowed()
-                        || !error.is_kind_of(self.ruby.exception_standard_error()) =>
-                {
-                    return Err(error);
-                }
-                _ => {}
-            }
-            self.items = items;
-            self.bytes = bytes;
-            self.path.truncate(path_len);
-            self.out.truncate(out_len);
-        }
-        if outer {
-            return Err(self.abort());
-        }
-        let index = self.validated_union_index(value, mapping, depth)?;
-        let schema = variants
-            .get(index)
-            .ok_or_else(|| self.fail("union branch index out of range"))?;
-        self.emit_long(index as i64);
-        self.value(schema, ns, value, depth, Some(mapping.child(index)?))
-    }
-
     fn value(
         &mut self,
         schema: &Schema,
         ns: NamespaceRef<'_>,
         value: Value,
         depth: usize,
-        mapping: Option<Mapping>,
-    ) -> Result<(), Error> {
-        if self.speculating && !self.trusted(value) {
-            return Err(self.abort());
-        }
-        let value = match mapping {
-            Some(mapping) => self.adapt(mapping, value)?,
-            None => value,
-        };
-        self.adapted_value(schema, ns, value, depth, mapping)
-    }
-
-    fn adapted_value(
-        &mut self,
-        schema: &Schema,
-        ns: NamespaceRef<'_>,
-        value: Value,
-        depth: usize,
-        mapping: Option<Mapping>,
     ) -> Result<(), Error> {
         if let Schema::Ref { name } = schema {
             let full = name.fully_qualified_name(ns);
@@ -903,16 +473,9 @@ impl Encoder<'_, '_> {
                 .get(&full)
                 .copied()
                 .ok_or_else(|| self.fail("unresolved named schema"))?;
-            return self.adapted_value(schema, full.namespace(), value, depth, mapping);
+            return self.value(schema, full.namespace(), value, depth);
         }
-        match self.physical(schema, ns, value, depth, mapping) {
-            Err(error)
-                if error.is_kind_of(self.error_class) && mapping.is_some() && !self.speculating =>
-            {
-                Err(mapping.unwrap().encoding_error(value)?)
-            }
-            result => result,
-        }
+        self.physical(schema, ns, value, depth)
     }
 
     fn element(
@@ -921,12 +484,11 @@ impl Encoder<'_, '_> {
         ns: NamespaceRef<'_>,
         value: Value,
         depth: usize,
-        mapping: Option<Mapping>,
         index: usize,
     ) -> Result<(), Error> {
         let n = self.path.len();
         crate::push_index(&mut self.path, index);
-        self.value(schema, ns, value, depth + 1, mapping)?;
+        self.value(schema, ns, value, depth + 1)?;
         self.path.truncate(n);
         Ok(())
     }
@@ -937,7 +499,6 @@ impl Encoder<'_, '_> {
         ns: NamespaceRef<'_>,
         (key, value): (Value, Value),
         depth: usize,
-        mapping: Option<Mapping>,
     ) -> Result<(), Error> {
         let start = self.write_text(key)?;
         let n = self.path.len();
@@ -952,7 +513,7 @@ impl Encoder<'_, '_> {
         } else {
             let _ = write!(self.path, "[{key:?}]");
         }
-        self.value(schema, ns, value, depth + 1, mapping)?;
+        self.value(schema, ns, value, depth + 1)?;
         self.path.truncate(n);
         Ok(())
     }
@@ -977,7 +538,6 @@ impl Encoder<'_, '_> {
         ns: NamespaceRef<'_>,
         value: Value,
         depth: usize,
-        mapping: Option<Mapping>,
     ) -> Result<(), Error> {
         if depth > self.limits.max_depth {
             return Err(self.fail("value exceeds maximum depth"));
@@ -1034,23 +594,16 @@ impl Encoder<'_, '_> {
                 Ok(())
             }
             Schema::Enum(enumeration) => {
-                let index = match mapping {
-                    Some(mapping) if RString::from_value(value).is_some() && self.core() => {
-                        mapping.enum_index(value)?
-                    }
-                    Some(mapping) => self.callback(|_| mapping.enum_index(value))?,
-                    None => {
-                        let symbol = RString::from_value(value)
-                            .ok_or_else(|| self.fail("expected enum String"))?;
-                        if symbol.enc_coderange_scan() != Coderange::SevenBit {
-                            return Err(self.fail("unknown enum symbol"));
-                        }
-                        enumeration.symbols.iter().position(|candidate| {
-                            (unsafe { symbol.as_slice() }) == candidate.as_bytes()
-                        })
-                    }
+                let symbol =
+                    RString::from_value(value).ok_or_else(|| self.fail("expected enum String"))?;
+                if symbol.enc_coderange_scan() != Coderange::SevenBit {
+                    return Err(self.fail("unknown enum symbol"));
                 }
-                .ok_or_else(|| self.fail("unknown enum symbol"))?;
+                let index = enumeration
+                    .symbols
+                    .iter()
+                    .position(|candidate| (unsafe { symbol.as_slice() }) == candidate.as_bytes())
+                    .ok_or_else(|| self.fail("unknown enum symbol"))?;
                 let symbol = enumeration
                     .symbols
                     .get(index)
@@ -1071,7 +624,6 @@ impl Encoder<'_, '_> {
                 if length > self.limits.max_items - self.items {
                     return Err(self.fail("array exceeds maximum item count"));
                 }
-                let child = mapping::child(mapping, 0)?;
                 if length > 0 {
                     let header = self.out.len();
                     self.emit_long(length as i64);
@@ -1079,7 +631,7 @@ impl Encoder<'_, '_> {
                     if plain {
                         while written < values.len() {
                             let item = values.entry(written as isize)?;
-                            self.element(&array.items, ns, item, depth, child, written)?;
+                            self.element(&array.items, ns, item, depth, written)?;
                             written += 1;
                         }
                     } else {
@@ -1088,7 +640,7 @@ impl Encoder<'_, '_> {
                                 this.refresh();
                                 let nil = this.ruby.qnil().as_value();
                                 let item = args.first().copied().unwrap_or(nil);
-                                this.element(&array.items, ns, item, depth, child, written)?;
+                                this.element(&array.items, ns, item, depth, written)?;
                                 written += 1;
                                 Ok(())
                             })
@@ -1111,14 +663,13 @@ impl Encoder<'_, '_> {
                 if length > self.limits.max_items - self.items {
                     return Err(self.fail("map exceeds maximum item count"));
                 }
-                let child = mapping::child(mapping, 0)?;
                 if length > 0 {
                     let header = self.out.len();
                     self.emit_long(length as i64);
                     let mut written = 0;
                     if plain {
                         values.foreach(|key: Value, item: Value| {
-                            self.entry(&map.types, ns, (key, item), depth, child)
+                            self.entry(&map.types, ns, (key, item), depth)
                                 .map_err(|error| crate::materialize(self.ruby, error))?;
                             written += 1;
                             Ok(ForEach::Continue)
@@ -1137,7 +688,7 @@ impl Encoder<'_, '_> {
                                 let nil = this.ruby.qnil().as_value();
                                 let key = args.first().copied().unwrap_or(nil);
                                 let item = args.get(1).copied().unwrap_or(nil);
-                                this.entry(&map.types, ns, (key, item), depth, child)?;
+                                this.entry(&map.types, ns, (key, item), depth)?;
                                 written += 1;
                                 Ok(())
                             })
@@ -1160,25 +711,15 @@ impl Encoder<'_, '_> {
                 let indices = records
                     .get(&(record as *const RecordSchema as usize))
                     .ok_or_else(|| self.fail("missing prepared field"))?;
-                for ((field_index, field), &index) in record.fields.iter().enumerate().zip(indices)
-                {
+                for (field, &index) in record.fields.iter().zip(indices) {
                     self.count_bytes(field.name.len())?;
                     let n = self.path.len();
                     self.path.push('.');
                     self.path.push_str(&field.name);
-                    let key = match mapping.and_then(|mapping| mapping.field_name(field_index)) {
-                        Some(name) => name,
-                        None => self.keys.entry((index * 2) as isize)?,
-                    };
+                    let key: Value = self.keys.entry((index * 2) as isize)?;
                     let symbol: Value = self.keys.entry((index * 2 + 1) as isize)?;
                     let value = self.field_value(data, key, symbol)?;
-                    self.value(
-                        &field.schema,
-                        full.namespace(),
-                        value,
-                        depth + 1,
-                        mapping::child(mapping, field_index)?,
-                    )?;
+                    self.value(&field.schema, full.namespace(), value, depth + 1)?;
                     self.path.truncate(n);
                 }
                 Ok(())
@@ -1212,8 +753,6 @@ impl Encoder<'_, '_> {
                             .position(|s| self.label(s, ns) == branch)
                             .ok_or_else(|| self.fail(format!("unknown union branch {branch}")))?
                     }
-                } else if let Some(mapping) = mapping {
-                    return self.mapped_union(union.variants(), ns, value, depth, mapping);
                 } else {
                     let (items, bytes, path_len, out_len) =
                         (self.items, self.bytes, self.path.len(), self.out.len());
@@ -1221,7 +760,7 @@ impl Encoder<'_, '_> {
                     for (i, schema) in union.variants().iter().enumerate() {
                         if self.accepts(schema, ns, value)? {
                             self.emit_long(i as i64);
-                            match self.value(schema, ns, value, depth, None) {
+                            match self.value(schema, ns, value, depth) {
                                 Ok(()) => return Ok(()),
                                 Err(error) => {
                                     if self.work > self.limits.max_items || self.overflowed() {
@@ -1247,7 +786,7 @@ impl Encoder<'_, '_> {
                     .get(index)
                     .ok_or_else(|| self.fail("union branch index out of range"))?;
                 self.emit_long(index as i64);
-                self.value(schema, ns, datum, depth, mapping::child(mapping, index)?)
+                self.value(schema, ns, datum, depth)
             }
             Schema::Decimal(decimal) => {
                 let unscaled: String = self.logical(

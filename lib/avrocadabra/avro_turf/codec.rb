@@ -15,9 +15,11 @@ module Avrocadabra
       end
 
       def encode(datum)
-        @native.encode(datum, false, @mapping.native)
-      rescue EncodeError => e
-        raise ::Avro::IO::AvroTypeError.new(@source, datum), cause: e
+        stream = StringIO.new(+"".b)
+        AvroTurf.with_codecs(@cache ||= Cache.new) do
+          ::Avro::IO::DatumWriter.new(@source).write(datum, ::Avro::IO::BinaryEncoder.new(stream))
+        end
+        stream.string
       end
 
       def current?

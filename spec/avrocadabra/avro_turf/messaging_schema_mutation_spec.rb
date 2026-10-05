@@ -48,6 +48,20 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     expect(native.encode(value, schema_id: id)).to eq(reference.encode(value, schema_id: id))
   end
 
+  it "recompiles a writer whose replaced fields claim identity with the old ones" do
+    definition = record_schema("Pair", [field("left", "int"), field("right", "string")])
+    id = registry.register("pairs", reference_schema(definition))
+    value = { "left" => 1, "right" => "two" }
+    [reference, native].each do |client|
+      expect(client.decode(client.encode(value, schema_id: id))).to eq(value)
+      schema = client.fetch_schema_by_id(id).first
+      fields = schema.fields.reverse
+      fields.define_singleton_method(:equal?) { |_other| true }
+      schema.define_singleton_method(:fields) { fields }
+    end
+    expect(native.encode(value, schema_id: id)).to eq(reference.encode(value, schema_id: id))
+  end
+
   it "invalidates cached resolution when a reader's nested default changes" do
     writer = record_schema("Event", [])
     definition = record_schema("Event", [field("tags", { "type" => "array", "items" => "string" }, default: ["a"])])

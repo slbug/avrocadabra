@@ -16,12 +16,13 @@ module Avrocadabra
         @containers = []
         visit(source, Set.new.compare_by_identity)
         @checks = @attributes.each_slice(CHECK_SIZE).with_index.map do |attributes, chunk|
-          reader_check(attributes, chunk * CHECK_SIZE)
+          [reader_check(attributes, chunk * CHECK_SIZE), @values.slice(chunk * CHECK_SIZE, CHECK_SIZE).freeze]
         end
       end
 
       def current?
-        @checks.all? { it.call(@objects, @values) } && NativeSchema.unchanged?(@containers)
+        @checks.all? { |check, values| NativeSchema.unchanged?([check.call(@objects), values]) } &&
+          NativeSchema.unchanged?(@containers)
       end
 
       private
@@ -47,10 +48,8 @@ module Avrocadabra
       end
 
       def reader_check(attributes, offset)
-        checks = attributes.each_with_index.map do |attribute, index|
-          "return false unless o[#{offset + index}].#{attribute}.equal?(v[#{offset + index}])"
-        end
-        source = "->(o, v) do\n#{checks.join("\n")}\ntrue\nend"
+        reads = attributes.each_with_index.map { |attribute, index| "o[#{offset + index}].#{attribute}" }
+        source = "->(o) { [\n#{reads.join(",\n")}\n] }"
         instance_eval(source, __FILE__, __LINE__)
       end
 

@@ -82,7 +82,7 @@ unsafe extern "C" fn call(
     }
 }
 
-pub fn each<F>(ruby: &Ruby, value: Value, mut callback: F) -> Result<(), Error>
+pub fn each<F>(ruby: &Ruby, value: Value, mut callback: F) -> Result<Value, Error>
 where
     F: FnMut(&[Value]) -> Result<(), Error>,
 {
@@ -105,6 +105,5 @@ where
     )?);
     let block = protect(|| unsafe { rb_sys::rb_proc_new(Some(call), scope.0.as_raw()) })?;
     let block = Proc::try_convert(unsafe { Value::from_raw(block) })?;
-    let _: Value = value.funcall_with_block("each", (), block)?;
-    Ok(())
+    value.funcall_with_block("each", (), block)
 }
