@@ -29,8 +29,6 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
     let classes = Classes {
         string: ruby.class_string().as_raw(),
         symbol: ruby.class_symbol().as_raw(),
-        union: union.as_raw(),
-        duration: duration.as_raw(),
     };
     let mut ctx = Encoder {
         ruby,
@@ -72,8 +70,6 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
 struct Classes {
     string: VALUE,
     symbol: VALUE,
-    union: VALUE,
-    duration: VALUE,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -526,8 +522,9 @@ impl Encoder<'_, '_> {
         Ok(())
     }
 
+    /// An empty collection is the terminator alone, whatever it declared.
     fn block(&mut self, header: usize, declared: usize, written: usize) {
-        if written != declared {
+        if written != declared || written == 0 {
             let mut count = Vec::new();
             if written > 0 {
                 write_long(written as i64, &mut count);
@@ -633,7 +630,7 @@ impl Encoder<'_, '_> {
                 if plain && length > self.limits.max_items - self.items {
                     return Err(self.fail("array exceeds maximum item count"));
                 }
-                if length > 0 {
+                if length > 0 || !plain {
                     let header = self.out.len();
                     self.emit_long(length as i64);
                     let mut written = 0;
@@ -672,7 +669,7 @@ impl Encoder<'_, '_> {
                 if plain && length > self.limits.max_items - self.items {
                     return Err(self.fail("map exceeds maximum item count"));
                 }
-                if length > 0 {
+                if length > 0 || !plain {
                     let header = self.out.len();
                     self.emit_long(length as i64);
                     let mut written = 0;
@@ -736,14 +733,10 @@ impl Encoder<'_, '_> {
             Schema::Union(union) => {
                 let datum;
                 let index = if value.is_kind_of(self.union) {
-                    let (branch, wrapped): (Value, Value) =
-                        if class_of(value) == Some(self.classes.union) {
-                            (value.funcall("branch", ())?, value.funcall("value", ())?)
-                        } else {
-                            self.callback(|_| {
-                                Ok((value.funcall("branch", ())?, value.funcall("value", ())?))
-                            })?
-                        };
+                    // `Data` accessors are Ruby methods a program can redefine.
+                    let (branch, wrapped): (Value, Value) = self.callback(|_| {
+                        Ok((value.funcall("branch", ())?, value.funcall("value", ())?))
+                    })?;
                     datum = wrapped;
                     if integer(branch) {
                         self.ruby_result(usize::try_convert(branch))?
@@ -900,14 +893,9 @@ impl Encoder<'_, '_> {
                 if !value.is_kind_of(self.duration) {
                     return Err(self.fail("expected Avrocadabra::Duration"));
                 }
-                let exact = class_of(value) == Some(self.classes.duration);
                 let mut parts = [0u32; 3];
                 for (i, name) in ["months", "days", "milliseconds"].iter().enumerate() {
-                    let part = if exact {
-                        value.funcall(*name, ())
-                    } else {
-                        self.callback(|_| value.funcall(*name, ()))
-                    };
+                    let part = self.callback(|_| value.funcall(*name, ()));
                     let part: Value = self.ruby_result(part)?;
                     parts[i] = u32::try_from(self.integer(part)?)
                         .map_err(|_| self.fail("duration components must be uint32"))?;

@@ -71,8 +71,8 @@ RSpec.describe Avrocadabra::Schema do
                                       "private method 'encode' called for an instance of String"])
   end
 
-  %w[time float decimal].each do |conversion|
-    it "dispatches core methods that a #{conversion} logical conversion redefines" do
+  %w[time float decimal union duration].each do |conversion|
+    it "dispatches core methods that a #{conversion} conversion redefines" do
       output, errors, status = ruby_fixture("redefined_by_conversion.rb", conversion)
       expect(status.success?).to be(true), errors
       expect(output).to eq("22\n")
@@ -84,6 +84,19 @@ RSpec.describe Avrocadabra::Schema do
     value.define_singleton_method(:each) { |&block| 100.times { block.call(12) } }
     limited = native_schema({ "type" => "array", "items" => "long" }, max_items: 10)
     expect { limited.encode(value) }.to raise_error(Avrocadabra::EncodeError, /maximum item count/)
+  end
+
+  it "iterates collections whose declared size is zero" do
+    values = [12]
+    values.define_singleton_method(:size) { 0 }
+    expect(schema.decode(schema.encode(values))).to eq([12])
+    empty = []
+    empty.define_singleton_method(:size) { 0 }
+    expect(schema.encode(empty)).to eq("\x00".b)
+    entries = native_schema({ "type" => "map", "values" => "long" })
+    pairs = { "a" => 1 }
+    pairs.define_singleton_method(:size) { 0 }
+    expect(entries.decode(entries.encode(pairs))).to eq("a" => 1)
   end
 
   it "trusts yielded values over a declared size above the item limit" do
