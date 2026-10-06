@@ -18,18 +18,9 @@ module Avrocadabra
         @reader = ::Avro::IO::DatumReader.new
       end
 
-      def union_index(schema, value, budget)
-        schema.schemas.index { ::Avro::Schema.validate(it, value, avrocadabra_budget: budget) } ||
-          raise(encoding_error(schema, value))
-      end
-
       def default_value(schema, name)
         field = schema.fields_hash.fetch(name)
         @reader.read_default_value(field.type, field.default)
-      end
-
-      def encoding_error(schema, value)
-        ::Avro::IO::AvroTypeError.new(schema, value)
       end
 
       private

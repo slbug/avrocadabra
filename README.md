@@ -94,7 +94,7 @@ Limits must be positive:
 
 - Items count values, containers, nulls, expanded defaults and union-search visits.
 - Union wrappers and named references add no datum depth.
-- Bytes bound the consumed datum and aggregate content, including copied names. They do not bound RSS.
+- Bytes bound the consumed datum and aggregate content, including copied names. Encoding stops once written bytes, discarded union attempts included, exceed the limit. They do not bound RSS.
 - Resolution applies the smaller writer/reader limits before copying or decoding, including discarded fields.
 - Schema JSON: 1 MiB total, 64 levels, 65,536 nodes. Fixed-scale decimals: 4,096 digits. Big-decimal coefficients use the byte limit; exponents never expand into zero-filled strings.
 
@@ -109,7 +109,7 @@ schema = Avrocadabra::Schema.new('"long"')
 Ractor.new(schema) { |codec| codec.decode(codec.encode(42)) }.value # => 42
 ```
 
-`encode` and `decode` hold the GVL by default. `release_gvl: true` releases it for owned Rust work; Ruby conversions keep it. See [transition costs](benchmark/README.md).
+`encode` and `decode` hold the GVL by default. `release_gvl: true` releases it for decode's owned Rust work. Encode writes Avro bytes while it converts Ruby values, so it keeps the GVL. See [transition costs](benchmark/README.md).
 
 ## Build
 

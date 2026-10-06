@@ -96,7 +96,12 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     [{ "type" => "map", "values" => { "type" => "int", "logicalType" => "date" } }, []],
     [{ "type" => "record", "name" => "Day",
        "fields" => [{ "name" => "day", "type" => { "type" => "int", "logicalType" => "date" } }] }, 42],
-    [["null", { "type" => "int", "logicalType" => "date" }], "invalid"]
+    [["null", { "type" => "int", "logicalType" => "date" }], "invalid"],
+    [["null", { "type" => "record", "name" => "Item", "fields" => [{ "name" => "id", "type" => "int" }] }],
+     { "id" => "1" }],
+    [["null", { "type" => "array", "items" => ["null", { "type" => "record", "name" => "Item",
+                                                         "fields" => [{ "name" => "id", "type" => "int" }] }] }],
+     [nil, { "id" => nil }]]
   ].each do |definition, datum|
     it "preserves the encoding exception for #{definition.inspect} and #{datum.inspect}" do
       id = registry.register("errors", reference_schema(definition))
@@ -115,6 +120,128 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     enumeration = { "type" => "enum", "name" => "Choice", "symbols" => ["A"] }
     expect_compatible([enumeration, "string"], "A")
     expect_compatible([enumeration, "string"], "B")
+  end
+
+  it "encodes decimal adapter values like Ruby Avro" do
+    random = Random.new(20_261_005)
+    floats = Array.new(400) { (random.rand - 0.5) * (10**random.rand(-12..12)) } +
+             Array.new(200) { random.rand(2**53) / (2.0**random.rand(1..12)) } +
+             [0.0, -0.0, 0.9524, 1e23, 5e-324, 0.30233257263183977, 920_013_567_207_072.2, 97_404_494_744_092.62,
+              Float::NAN, Float::INFINITY]
+    numbers = [0, 1, -1, 127, -128, 2**40, -(2**62), 2**70, Rational(1, 2)] +
+              %w[0 -0 1.5 0.95240000 -12.345678 123456789.12345678 1e-9 NaN].map { BigDecimal(it) }
+    [[14, 8], [4, 0], [38, 18], [6, 2]].each do |precision, scale|
+      decimal = { "type" => "bytes", "logicalType" => "decimal", "precision" => precision, "scale" => scale }
+      definition = record_schema("Amount", [field("value", decimal), field("optional", ["null", decimal])])
+      id = registry.register("decimals", reference_schema(definition))
+      (floats + numbers + ["1.5"]).each do |value|
+        results = [reference, native].map do |client|
+          client.encode({ "value" => value, "optional" => value }, schema_id: id)
+        rescue StandardError => e
+          [e.class, e.message]
+        end
+        expect(results.last).to eq(results.first), "#{value.inspect} as decimal(#{precision}, #{scale})"
+      end
+    end
+  end
+
+  it "encodes decimals under a BigDecimal precision limit like Ruby Avro" do
+    decimal = { "type" => "bytes", "logicalType" => "decimal", "precision" => 9, "scale" => 4 }
+    id = registry.register("limited", reference_schema(record_schema("Amount", [field("value", ["null", decimal])])))
+    previous = BigDecimal.limit(2)
+    datum = { "value" => BigDecimal("12.345") }
+    expect(native.encode(datum, schema_id: id)).to eq(reference.encode(datum, schema_id: id))
+  ensure
+    BigDecimal.limit(previous)
+  end
+
+  it "calls redefined built-in adapters like Ruby Avro" do
+    timestamp = { "type" => "long", "logicalType" => "timestamp-millis" }
+    decimal = { "type" => "bytes", "logicalType" => "decimal", "precision" => 9, "scale" => 4 }
+    definition = record_schema("Stamped", [field("at", ["null", timestamp]), field("amount", ["null", decimal])])
+    id = registry.register("stamped", reference_schema(definition))
+    calls = 0
+    allow(Avro::LogicalTypes::TimestampMillis).to receive(:encode).and_wrap_original do |original, value|
+      original.call(value) + (calls += 1)
+    end
+    results = [reference, native].map do |client|
+      calls = 0
+      adapter = client.fetch_schema_by_id(id).first.fields.last.type.schemas.last.type_adapter
+      allow(adapter).to(receive(:encode).and_wrap_original { |original, value| original.call(value + (calls += 1)) })
+      client.encode({ "at" => Time.at(1), "amount" => BigDecimal("1.5") }, schema_id: id)
+    end
+    expect(results.last).to eq(results.first)
+  end
+
+  it "dispatches field-name objects with overridden equality like Ruby Avro" do
+    definition = record_schema("Pair", [field("left", "int"), field("right", "string")])
+    id = registry.register("pairs", reference_schema(definition))
+    name = Class.new(String) do
+      def eql?(_other) = raise(IOError, "field name equality failed")
+    end
+    results = [reference, native].map do |client|
+      client.fetch_schema_by_id(id).first.fields.last.instance_variable_set(:@name, name.new("right"))
+      client.encode({ "left" => 1, "right" => "x" }, schema_id: id)
+    rescue IOError => e
+      [e.class, e.message]
+    end
+    expect(results).to eq([[IOError, "field name equality failed"]] * 2)
+  end
+
+  it "never dispatches equality on colliding datum keys during field lookups" do
+    id = registry.register("pairs",
+                           reference_schema(record_schema("Pair", [field("left", "int"), field("right", "string")])))
+    colliding = Class.new do
+      def hash = "right".hash
+      def eql?(_other) = raise(IOError, "datum key equality")
+    end
+    datum = { colliding.new => 0 }.merge("left" => 1, "right" => "x")
+    expect(native.encode(datum, schema_id: id)).to eq(reference.encode(datum, schema_id: id))
+  end
+
+  it "looks up identity hash fields by the schema's field name objects" do
+    definition = record_schema("Pair", [field("left", "int"), field("right", %w[null string])])
+    nested = ["null", definition]
+    [definition, nested].each do |schema_definition|
+      id = registry.register("pairs", reference_schema(schema_definition))
+      results = [reference, native].map do |client|
+        schema = client.fetch_schema_by_id(id).first
+        record = schema.type_sym == :union ? schema.schemas.last : schema
+        datum = {}.compare_by_identity
+        datum[record.fields.first.name] = 1
+        datum[record.fields.last.name] = "x"
+        client.encode(datum, schema_id: id)
+      end
+      expect(results.last).to eq(results.first)
+    end
+  end
+
+  it "calls hash default procs inside union branches like Ruby Avro" do
+    id = registry.register("defaults", reference_schema(["null", record_schema("Counter", [field("id", "long")])]))
+    counter = lambda do
+      calls = 0
+      Hash.new { calls += 1 }
+    end
+    expect(native.encode(counter.call, schema_id: id)).to eq(reference.encode(counter.call, schema_id: id))
+  end
+
+  it "selects unambiguous nested branches without Ruby Avro validation" do
+    factor = { "type" => "bytes", "logicalType" => "decimal", "precision" => 14, "scale" => 8 }
+    seen = { "type" => "long", "logicalType" => "timestamp-millis" }
+    flag = record_schema("Flag",
+                         [field("code", "string"), field("factor", ["null", factor]), field("seen", ["null", seen])])
+    station = record_schema("Station", [field("reading", "int"),
+                                        field("flags", ["null", { "type" => "array", "items" => ["string", flag] }])])
+    definition = ["null", { "type" => "map", "values" => station }]
+    datum = { "a" => { reading: 1, flags: ["raw", { code: "x", factor: BigDecimal("0.9524"), seen: Time.at(1) }] },
+              "b" => { reading: 2, flags: nil } }
+    expect_compatible(definition, datum)
+    validations = 0
+    trace = TracePoint.new(:call) { validations += 1 }
+    trace.enable(target: Avro::Schema.method(:validate)) do
+      native.encode(datum, schema_id: registry.register("values", reference_schema(definition)))
+    end
+    expect(validations).to eq(0)
   end
 
   it "preserves defaults on hashes, nullable omissions and string-key precedence" do

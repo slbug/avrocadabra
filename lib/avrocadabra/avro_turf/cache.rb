@@ -8,6 +8,7 @@ module Avrocadabra
       def initialize
         @entries = {}.compare_by_identity
         @mutex = Mutex.new
+        @plans = NativeSchema::Plans.new
       end
 
       def fetch(schema)

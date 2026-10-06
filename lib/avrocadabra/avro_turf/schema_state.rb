@@ -4,18 +4,25 @@ module Avrocadabra
   module AvroTurf
     class SchemaState
       FIELD_ATTRIBUTES = %i[name type default default? aliases].freeze
+      CHECK_SIZE = 512
 
       attr_reader :schemas
 
       def initialize(source)
         @schemas = Set.new.compare_by_identity
+        @objects = []
         @attributes = []
+        @values = []
         @containers = []
         visit(source, Set.new.compare_by_identity)
+        @checks = @attributes.each_slice(CHECK_SIZE).with_index.map do |attributes, chunk|
+          [reader_check(attributes, chunk * CHECK_SIZE), @values.slice(chunk * CHECK_SIZE, CHECK_SIZE).freeze]
+        end
       end
 
       def current?
-        NativeSchema.unchanged?(@attributes, @containers)
+        @checks.all? { |check, values| NativeSchema.unchanged?([check.call(@objects), values]) } &&
+          NativeSchema.unchanged?(@containers)
       end
 
       private
@@ -40,9 +47,17 @@ module Avrocadabra
         end
       end
 
+      def reader_check(attributes, offset)
+        reads = attributes.each_with_index.map { |attribute, index| "o[#{offset + index}].#{attribute}" }
+        source = "->(o) { [\n#{reads.join(",\n")}\n] }"
+        instance_eval(source, __FILE__, __LINE__)
+      end
+
       def observe(object, attribute, observed)
         value = object.public_send(attribute)
-        @attributes.push(object, attribute, value)
+        @objects << object
+        @attributes << attribute
+        @values << value
         watch(value, observed)
         value
       end

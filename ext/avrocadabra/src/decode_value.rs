@@ -155,13 +155,13 @@ impl<'schema> Decoder<'_, 'schema> {
                 AvroValue::Int(value),
             ) => Ok(self.ruby.into_value(value)),
             (Schema::Long | Schema::Float | Schema::Double, AvroValue::Long(value)) => {
-                Ok(self.ruby.into_value(value))
+                crate::allocate(|| self.ruby.into_value(value))
             }
             (Schema::Float | Schema::Double, AvroValue::Float(value)) => {
-                Ok(self.ruby.into_value(f64::from(value)))
+                crate::allocate(|| self.ruby.into_value(f64::from(value)))
             }
             (Schema::Float | Schema::Double, AvroValue::Double(value)) => {
-                Ok(self.ruby.into_value(value))
+                crate::allocate(|| self.ruby.into_value(value))
             }
             (Schema::String | Schema::Bytes, AvroValue::String(value)) => self.string(&value),
             (Schema::Bytes | Schema::String, AvroValue::Bytes(value)) => self.bytes(&value),
@@ -198,7 +198,7 @@ impl<'schema> Decoder<'_, 'schema> {
             }
             (Schema::Array(array), AvroValue::Array(values)) => {
                 self.collection_size(values.len())?;
-                let output = self.ruby.ary_new_capa(values.len());
+                let output = crate::allocate(|| self.ruby.ary_new_capa(values.len()))?;
                 let child = mapping::child(mapping, 0)?;
                 for (index, value) in values.into_iter().enumerate() {
                     let path_length = self.path.len();
@@ -211,13 +211,16 @@ impl<'schema> Decoder<'_, 'schema> {
             }
             (Schema::Map(map), AvroValue::Record(values)) => {
                 self.collection_size(values.len())?;
-                let output = self.ruby.hash_new_capa(values.len());
+                let output = crate::allocate(|| self.ruby.hash_new_capa(values.len()))?;
                 let child = mapping::child(mapping, 0)?;
                 for (index, (name, value)) in values.into_iter().enumerate() {
                     let path_length = self.path.len();
                     crate::push_index(&mut self.path, index);
-                    let key = self.ruby.str_new(&name);
-                    key.freeze();
+                    let key = crate::allocate(|| {
+                        let key = self.ruby.str_new(&name);
+                        key.freeze();
+                        key
+                    })?;
                     let value = self.value(&map.types, value, namespace, depth + 1, child);
                     self.path.truncate(path_length);
                     output.aset(key, value?)?;
@@ -246,7 +249,7 @@ impl<'schema> Decoder<'_, 'schema> {
             (Schema::TimeMicros, AvroValue::TimeMicros(ticks))
                 if (0..86_400_000_000).contains(&ticks) =>
             {
-                Ok(self.ruby.into_value(ticks))
+                crate::allocate(|| self.ruby.into_value(ticks))
             }
             (Schema::TimestampMillis, AvroValue::TimestampMillis(ticks)) => {
                 self.logical()?.funcall("timestamp_value", (ticks, 1_000))
@@ -260,7 +263,7 @@ impl<'schema> Decoder<'_, 'schema> {
             (Schema::LocalTimestampMillis, AvroValue::LocalTimestampMillis(ticks))
             | (Schema::LocalTimestampMicros, AvroValue::LocalTimestampMicros(ticks))
             | (Schema::LocalTimestampNanos, AvroValue::LocalTimestampNanos(ticks)) => {
-                Ok(self.ruby.into_value(ticks))
+                crate::allocate(|| self.ruby.into_value(ticks))
             }
             (Schema::Uuid(_), AvroValue::Uuid(value)) => self.string(&value.to_string()),
             (Schema::Duration(fixed), AvroValue::Duration(value)) if fixed.size == 12 => {
@@ -290,14 +293,14 @@ impl<'schema> Decoder<'_, 'schema> {
         if value.len() > self.limits.max_bytes {
             return Err(self.error("decoded string exceeds maximum byte count"));
         }
-        Ok(self.ruby.str_new(value).as_value())
+        crate::allocate(|| self.ruby.str_new(value).as_value())
     }
 
     fn bytes(&self, value: &[u8]) -> Result<Value, Error> {
         if value.len() > self.limits.max_bytes {
             return Err(self.error("decoded bytes exceed maximum byte count"));
         }
-        Ok(self.ruby.str_from_slice(value).as_value())
+        crate::allocate(|| self.ruby.str_from_slice(value).as_value())
     }
 
     fn record(
@@ -309,7 +312,7 @@ impl<'schema> Decoder<'_, 'schema> {
         mapping: Option<Mapping>,
     ) -> Result<Value, Error> {
         self.collection_size(values.len())?;
-        let output = self.ruby.hash_new_capa(record.fields.len());
+        let output = crate::allocate(|| self.ruby.hash_new_capa(record.fields.len()))?;
         for (name, value) in values {
             let &field_index = record
                 .lookup
@@ -370,7 +373,7 @@ impl<'schema> Decoder<'_, 'schema> {
                     .and_then(Json::as_object)
                     .ok_or_else(|| self.error("record default must be an object"))?;
                 self.collection_size(record.fields.len())?;
-                let output = self.ruby.hash_new_capa(record.fields.len());
+                let output = crate::allocate(|| self.ruby.hash_new_capa(record.fields.len()))?;
                 for field in &record.fields {
                     let json = object
                         .get(&field.name)
@@ -397,7 +400,7 @@ impl<'schema> Decoder<'_, 'schema> {
                     .and_then(Json::as_array)
                     .ok_or_else(|| self.error("array default must be an array"))?;
                 self.collection_size(values.len())?;
-                let output = self.ruby.ary_new_capa(values.len());
+                let output = crate::allocate(|| self.ruby.ary_new_capa(values.len()))?;
                 for (index, value) in values.iter().enumerate() {
                     let path_length = self.path.len();
                     crate::push_index(&mut self.path, index);
@@ -412,9 +415,9 @@ impl<'schema> Decoder<'_, 'schema> {
                     .and_then(Json::as_object)
                     .ok_or_else(|| self.error("map default must be an object"))?;
                 self.collection_size(values.len())?;
-                let output = self.ruby.hash_new_capa(values.len());
+                let output = crate::allocate(|| self.ruby.hash_new_capa(values.len()))?;
                 for (key, value) in values {
-                    let key = self.ruby.str_new(key);
+                    let key = crate::allocate(|| self.ruby.str_new(key))?;
                     let value =
                         self.default_value(&map.types, Some(value), namespace, depth + 1)?;
                     output.aset(key, value)?;
@@ -455,18 +458,19 @@ impl<'schema> Decoder<'_, 'schema> {
 
     fn default_scalar(&self, json: Option<&Json>) -> Result<Value, Error> {
         match json {
-            None => Ok(self.ruby.to_symbol("no_default").as_value()),
+            None => crate::allocate(|| self.ruby.to_symbol("no_default").as_value()),
             Some(Json::Null) => Ok(self.ruby.qnil().as_value()),
             Some(Json::Bool(value)) => Ok(self.ruby.into_value(*value)),
             Some(Json::String(value)) => self.string(value),
-            Some(Json::Number(value)) => Ok(match value.as_i64() {
-                Some(value) => self.ruby.into_value(value),
-                None => self.ruby.into_value(
-                    value
+            Some(Json::Number(value)) => match value.as_i64() {
+                Some(value) => crate::allocate(|| self.ruby.into_value(value)),
+                None => {
+                    let value = value
                         .as_f64()
-                        .ok_or_else(|| self.error("invalid default number"))?,
-                ),
-            }),
+                        .ok_or_else(|| self.error("invalid default number"))?;
+                    crate::allocate(|| self.ruby.into_value(value))
+                }
+            },
             _ => Err(self.error("invalid scalar default")),
         }
     }

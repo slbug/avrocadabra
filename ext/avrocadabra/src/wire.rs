@@ -4,9 +4,8 @@ use apache_avro::{
     types::Value,
 };
 use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
+    Deserialize, Deserializer,
     de::{MapAccess, SeqAccess, Visitor},
-    ser::{Error, SerializeMap, SerializeSeq, SerializeStruct},
 };
 use std::fmt;
 
@@ -76,67 +75,6 @@ pub fn schema(schema: &Schema) -> Result<Schema, String> {
 }
 
 pub struct Datum(pub Value);
-
-struct DatumRef<'a>(&'a Value);
-
-impl Serialize for Datum {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        DatumRef(&self.0).serialize(serializer)
-    }
-}
-
-impl Serialize for DatumRef<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0 {
-            Value::Null => serializer.serialize_unit(),
-            Value::Boolean(value) => serializer.serialize_bool(*value),
-            Value::Int(value) | Value::Date(value) | Value::TimeMillis(value) => {
-                serializer.serialize_i32(*value)
-            }
-            Value::Long(value)
-            | Value::TimeMicros(value)
-            | Value::TimestampMillis(value)
-            | Value::TimestampMicros(value)
-            | Value::TimestampNanos(value)
-            | Value::LocalTimestampMillis(value)
-            | Value::LocalTimestampMicros(value)
-            | Value::LocalTimestampNanos(value) => serializer.serialize_i64(*value),
-            Value::Float(value) => serializer.serialize_f32(*value),
-            Value::Double(value) => serializer.serialize_f64(*value),
-            Value::String(value) => serializer.serialize_str(value),
-            Value::Bytes(value) | Value::Fixed(_, value) => serializer.serialize_bytes(value),
-            Value::Enum(index, _) => {
-                let mut record = serializer.serialize_struct("", 1)?;
-                record.serialize_field("index", &(*index as i32))?;
-                record.end()
-            }
-            Value::Union(index, value) => {
-                serializer.serialize_newtype_variant("", *index, "", &DatumRef(value))
-            }
-            Value::Array(values) => {
-                let mut seq = serializer.serialize_seq(Some(values.len()))?;
-                for value in values {
-                    seq.serialize_element(&DatumRef(value))?;
-                }
-                seq.end()
-            }
-            Value::Record(values) => {
-                let mut map = serializer.serialize_map(Some(values.len()))?;
-                for (key, value) in values {
-                    map.serialize_entry(key, &DatumRef(value))?;
-                }
-                map.end()
-            }
-            Value::Decimal(value) => value.serialize(serializer),
-            Value::BigDecimal(value) => serializer
-                .serialize_bytes(&crate::big_decimal::encode(value).map_err(S::Error::custom)?),
-            Value::Duration(value) => serializer.serialize_bytes(&<[u8; 12]>::from(*value)),
-            Value::Map(_) | Value::Uuid(_) => {
-                Err(S::Error::custom("unordered or unconverted datum"))
-            }
-        }
-    }
-}
 
 impl<'de> Deserialize<'de> for Datum {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {

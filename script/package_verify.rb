@@ -46,7 +46,9 @@ smoke_test = <<~'RUBY'
         5.times do
           encoded = prepared.encode(datum, release_gvl: release)
           decoded = prepared.decode(encoded, release_gvl: release)
-          raise "Ractor round trip failed" unless decoded == datum
+          unless decoded == datum
+            raise "Ractor round trip failed: release_gvl=#{release} #{encoded.unpack1("H*")} #{decoded.inspect}"
+          end
           raise "Decimal type changed" unless decoded.fetch("decimal").instance_of?(BigDecimal)
           raise "Float type changed" unless %w[single double].all? { decoded.fetch(it).instance_of?(Float) }
         end

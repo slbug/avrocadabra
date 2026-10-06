@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe Avrocadabra::Schema do
-  it "exposes version 0.0.2 and distinct public errors" do
-    expect(Avrocadabra::VERSION).to eq("0.0.2")
+  it "exposes version 0.0.3 and distinct public errors" do
+    expect(Avrocadabra::VERSION).to eq("0.0.3")
     errors = [Avrocadabra::SchemaError, Avrocadabra::EncodeError, Avrocadabra::DecodeError]
     expect(errors).to all(be < Avrocadabra::Error)
     expect(errors).to all(be < StandardError)

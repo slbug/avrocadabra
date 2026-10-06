@@ -4,7 +4,7 @@ module Avrocadabra
   module AvroTurf
     module DatumReader
       def read(decoder)
-        cache = Thread.current[:avrocadabra_codecs]
+        cache = NativeSchema.codecs
         return super unless cache && decoder.instance_of?(::Avro::IO::BinaryDecoder) && decoder.reader.is_a?(StringIO)
 
         self.readers_schema = writers_schema unless readers_schema

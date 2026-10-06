@@ -40,6 +40,52 @@ module AvrocadabraBenchmark
     ]
   }.freeze
 
+  FACTOR = { "type" => "bytes", "logicalType" => "decimal", "precision" => 14, "scale" => 8 }.freeze
+
+  NESTED_SCHEMA = {
+    "type" => "record", "name" => "Survey", "namespace" => "benchmark",
+    "fields" => [
+      { "name" => "id", "type" => "long" },
+      { "name" => "stations", "type" => ["null", {
+        "type" => "map", "values" => {
+          "type" => "record", "name" => "Station", "fields" => [
+            { "name" => "reading", "type" => "int" },
+            { "name" => "offset", "type" => "int" },
+            { "name" => "unit", "type" => "string" },
+            { "name" => "flags", "type" => ["null", {
+              "type" => "array", "items" => ["string", {
+                "type" => "record", "name" => "Flag", "fields" => [
+                  { "name" => "code", "type" => "string" },
+                  { "name" => "level", "type" => "int" },
+                  { "name" => "source", "type" => %w[null string] },
+                  { "name" => "weight", "type" => %w[null double] },
+                  { "name" => "factor", "type" => ["null", FACTOR] },
+                  { "name" => "active", "type" => %w[null boolean] },
+                  { "name" => "count", "type" => %w[null int] }
+                ]
+              }]
+            }] }
+          ]
+        }
+      }] }
+    ]
+  }.freeze
+
+  def self.cases
+    [["small", SCHEMA, 3, payload(items: 3)], ["large", SCHEMA, 500, payload(items: 500)],
+     ["nested", NESTED_SCHEMA, 500, nested_payload(stations: 500)]]
+  end
+
+  def self.nested_payload(stations:)
+    { "id" => 4_294_967_296,
+      "stations" => Array.new(stations) do |index|
+        ["station-#{index}", { "reading" => 1500 + (index * 31), "offset" => 12, "unit" => "kPa",
+                               "flags" => [{ "code" => "CALIBRATED", "level" => 40, "source" => "probe",
+                                             "weight" => 0.5, "factor" => BigDecimal("0.9524"),
+                                             "active" => true, "count" => 2 }] }]
+      end.to_h }
+  end
+
   def self.payload(items:)
     random = Random.new(20_261_003)
     { "id" => 4_294_967_296, "created_at" => Time.at(1_791_000_000, 123_456, :microsecond).utc,
@@ -78,13 +124,12 @@ module AvrocadabraBenchmark
     end
 
     def run
-      native = Avrocadabra::Schema.new(SCHEMA)
-      reference = ReferenceCodec.new(SCHEMA)
       rows = []
-      { "small" => 3, "large" => 500 }.each do |name, size|
+      AvrocadabraBenchmark.cases.each do |name, schema, size, datum|
         next unless ["all", name].include?(@options[:case])
 
-        datum = AvrocadabraBenchmark.payload(items: size)
+        native = Avrocadabra::Schema.new(schema)
+        reference = ReferenceCodec.new(schema)
         bytes = reference.encode(datum)
         verify(native, reference, datum, bytes)
         operations(native, reference, datum, bytes).each do |engine, operation, callable|
@@ -114,7 +159,6 @@ module AvrocadabraBenchmark
        ["ruby-avro", "decode", -> { reference.decode(bytes) }],
        ["native GVL held", "encode", -> { native.encode(datum, release_gvl: false) }],
        ["native GVL held", "decode", -> { native.decode(bytes, release_gvl: false) }],
-       ["native GVL released", "encode", -> { native.encode(datum, release_gvl: true) }],
        ["native GVL released", "decode", -> { native.decode(bytes, release_gvl: true) }]]
     end
 
@@ -177,7 +221,9 @@ module AvrocadabraBenchmark
       parser.on("--seconds N", Float, "Seconds per round (0.25)") { result[:seconds] = it }
       parser.on("--warmup N", Float, "Warmup seconds per operation (0.15)") { result[:warmup] = it }
       parser.on("--samples N", Integer, "Latency samples per operation (500)") { result[:samples] = it }
-      parser.on("--case NAME", %w[all small large], "Payload: all, small, large") { result[:case] = it }
+      parser.on("--case NAME", %w[all small large nested], "Payload: all, small, large, nested") do |name|
+        result[:case] = name
+      end
       parser.on("--json PATH", "Write JSON results") { result[:json] = it }
     end.parse!(argv)
     unless result.values_at(:rounds, :seconds, :warmup, :samples).all?(&:positive?)

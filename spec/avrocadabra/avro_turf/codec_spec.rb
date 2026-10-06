@@ -117,11 +117,6 @@ RSpec.describe Avrocadabra::AvroTurf::Codec do
 
     before { allow(Avrocadabra::Schema).to receive(:new).and_return(prepared) }
 
-    it "retains the GVL for Messaging encoding" do
-      codec.encode(42)
-      expect(native).to have_received(:encode).with(42, false, kind_of(Array))
-    end
-
     it "retains the GVL and unwraps unions for Messaging decoding" do
       stream = StringIO.new("\x02".b)
       codec.read(Avro::IO::BinaryDecoder.new(stream), codec)

@@ -55,6 +55,29 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     end
   end
 
+  it "calls union branch adapters like Ruby Avro" do
+    schema = reference_schema(record_schema("Reader", [field("value", %w[null long])]))
+    calls = []
+    adapter = Object.new
+    allow(adapter).to receive(:encode) do |value|
+      calls << value
+      raise IOError, "repeated adapter call" if calls.size > 2
+
+      value * 2
+    end
+    schema.fields.first.type.schemas.last.instance_variable_set(:@type_adapter, adapter)
+    allow(store).to receive(:find).with("Reader", nil).and_return(schema)
+    results = [{ "value" => 21 }, { "value" => [21] }].flat_map do |value|
+      [reference, native].map do |client|
+        calls.clear
+        [client.encode(value, schema_name: "Reader"), calls.dup]
+      rescue StandardError => e
+        [e.class, e.message, calls.dup]
+      end
+    end
+    expect(results.each_slice(2).map(&:last)).to eq(results.each_slice(2).map(&:first))
+  end
+
   it "keeps adapter order through nested collections and reader defaults" do
     old = record_schema("Item", [field("value", %w[null long])])
     current = record_schema("Item", [field("value", "long"), field("added", "long", default: 7)])

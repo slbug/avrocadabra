@@ -112,6 +112,31 @@ RSpec.describe Avrocadabra::Schema do
     expect(schema.decode(avro_long(5) + avro_long(0))).to eq(Array.new(5))
   end
 
+  it "stops encoding once written bytes exceed max_bytes" do
+    schema = native_schema({ "type" => "array", "items" => "long" }, max_bytes: 16)
+    yielded = 0
+    values = Class.new(Array) do
+      define_method(:each) do |&block|
+        1_000_000.times do
+          yielded += 1
+          block.call(2**40)
+        end
+      end
+    end.new([1])
+    expect { schema.encode(values) }.to raise_error(Avrocadabra::EncodeError, /max_bytes/)
+    expect(yielded).to be < 10
+  end
+
+  it "counts discarded union attempts toward max_bytes" do
+    branch = lambda do |name, leaf|
+      record_schema(name, [field("s", "string"), field("inner", record_schema("#{name}Inner", [field("n", leaf)]))])
+    end
+    union = [branch.call("Longs", "long"), branch.call("Texts", "string")]
+    datum = { "s" => "x" * 60, "inner" => { "n" => "text" } }
+    expect(native_schema(union, max_bytes: 200).encode(datum).bytesize).to eq(67)
+    expect { native_schema(union, max_bytes: 100).encode(datum) }.to raise_error(Avrocadabra::EncodeError, /max_bytes/)
+  end
+
   it "enforces the datum byte limit on encode and decode" do
     schema = native_schema("bytes", max_bytes: 32)
     expect { schema.encode("x" * 33) }.to raise_error(Avrocadabra::EncodeError)

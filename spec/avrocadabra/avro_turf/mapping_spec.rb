@@ -16,14 +16,6 @@ RSpec.describe Avrocadabra::AvroTurf::Mapping do
     expect(context.native.first).to equal(context)
   end
 
-  it "selects union branches using Ruby Avro validation" do
-    schema = reference_schema(["null", { "type" => "int", "logicalType" => "date" }, "string"])
-    adapter = mapping(schema)
-    expect(adapter.union_index(schema, Date.new(2000, 1, 1), [100, 10])).to eq(1)
-    expect(adapter.union_index(schema, "today", [100, 10])).to eq(2)
-    expect { adapter.union_index(schema, [], [100, 10]) }.to raise_error(Avro::IO::AvroTypeError)
-  end
-
   it "materializes defaults with the reader's logical adapter" do
     schema = reference_schema(record_schema("Day", [field("day", { "type" => "int", "logicalType" => "date" },
                                                           default: 1)]))

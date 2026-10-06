@@ -237,9 +237,9 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
   end
 
   it "keeps native caches scoped to each messaging instance" do
-    allow(Avrocadabra::AvroTurf::Codec).to receive(:new).and_call_original
+    allow(Avrocadabra::NativeSchema::Plans).to receive(:new).and_call_original
     2.times { messaging.encode(datum, schema_name: "Event") }
-    expect(Avrocadabra::AvroTurf::Codec).to have_received(:new).twice
+    expect(Avrocadabra::NativeSchema::Plans).to have_received(:new).twice
   end
 
   it "leaves ordinary Messaging clients on the Ruby codecs" do

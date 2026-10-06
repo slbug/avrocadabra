@@ -10,11 +10,7 @@ if ENV["COVERAGE"] == "true"
   end
   SimpleCov.formatters = [SimpleCov::Formatter::HTMLFormatter, SimpleCov::Formatter::LcovFormatter]
   SimpleCov.command_name "RSpec (Ruby API only)"
-  SimpleCov.start do
-    enable_coverage :branch
-    cover "lib/**/*.rb"
-    minimum_coverage line: 95, branch: 95
-  end
+  SimpleCov.start { minimum_coverage line: 95, branch: 95 }
 end
 
 require "avrocadabra"

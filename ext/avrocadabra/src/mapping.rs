@@ -1,9 +1,17 @@
-use magnus::{Error, Exception, RArray, RString, Value, prelude::*};
+use magnus::{
+    Error, RArray, RString, Value,
+    prelude::*,
+    rb_sys::{AsRawValue, FromRawValue},
+};
 
 #[derive(Clone, Copy)]
 pub struct Mapping {
     context: Value,
     node: RArray,
+}
+
+fn entry(array: RArray, index: usize) -> Value {
+    unsafe { Value::from_raw(rb_sys::rb_ary_entry(array.as_raw(), index as _)) }
 }
 
 impl Mapping {
@@ -15,15 +23,22 @@ impl Mapping {
     }
 
     pub fn child(self, index: usize) -> Result<Self, Error> {
-        let children: RArray = self.node.entry(2)?;
+        let node = RArray::from_value(entry(self.node, 2))
+            .and_then(|children| RArray::from_value(entry(children, index)))
+            .ok_or_else(|| {
+                Error::new(
+                    magnus::Ruby::get_with(self.node).exception_index_error(),
+                    "missing mapping node",
+                )
+            })?;
         Ok(Self {
             context: self.context,
-            node: children.entry(index as isize)?,
+            node,
         })
     }
 
     pub fn convert(self, method: &str, value: Value) -> Result<Value, Error> {
-        let adapter: Value = self.node.entry(1)?;
+        let adapter = entry(self.node, 1);
         if adapter.is_nil() {
             Ok(value)
         } else {
@@ -31,30 +46,9 @@ impl Mapping {
         }
     }
 
-    pub fn identity(self) -> Result<bool, Error> {
-        Ok(self.node.entry::<Value>(1)?.is_nil())
-    }
-
-    pub fn union_index(self, value: Value, budget: RArray) -> Result<usize, Error> {
-        let schema: Value = self.node.entry(0)?;
-        self.context.funcall("union_index", (schema, value, budget))
-    }
-
-    pub fn enum_index(self, value: Value) -> Result<Option<usize>, Error> {
-        let schema: Value = self.node.entry(0)?;
-        let symbols: RArray = schema.funcall_public("symbols", ())?;
-        symbols.funcall_public("index", (value,))
-    }
-
     pub fn default_value(self, name: RString) -> Result<Value, Error> {
         let schema: Value = self.node.entry(0)?;
         self.context.funcall("default_value", (schema, name))
-    }
-
-    pub fn encoding_error(self, value: Value) -> Result<Error, Error> {
-        let schema: Value = self.node.entry(0)?;
-        let exception: Exception = self.context.funcall("encoding_error", (schema, value))?;
-        Ok(exception.into())
     }
 }
 

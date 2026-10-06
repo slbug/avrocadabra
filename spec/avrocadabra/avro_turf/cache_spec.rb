@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "objspace"
 require "support/avro_turf_fixture"
 
 RSpec.describe Avrocadabra::AvroTurf::Cache do
@@ -71,11 +72,12 @@ RSpec.describe Avrocadabra::AvroTurf::Cache do
     cache = described_class.new
     first = cache.fetch(schema)
     adapter = Object.new
-    allow(adapter).to receive(:encode).with(2).and_return(7)
+    allow(adapter).to receive(:decode).with(2).and_return(7)
     schema.instance_variable_set(:@type_adapter, adapter)
     replacement = cache.fetch(schema)
     expect(replacement).not_to equal(first)
-    expect(reference_decode("long", replacement.encode(2))).to eq(7)
+    decoder = Avro::IO::BinaryDecoder.new(StringIO.new(reference_encode("long", 2)))
+    expect(replacement.read(decoder, replacement)).to eq(7)
   end
 
   it "reuses a replacement published while another thread checks a stale entry" do
@@ -119,5 +121,36 @@ RSpec.describe Avrocadabra::AvroTurf::Cache do
     codec = cache.fetch(schema)
     key.replace("second")
     expect(cache.fetch(schema)).not_to equal(codec)
+  end
+
+  it "observes mutable values inside frozen hash defaults" do
+    schema = reference_schema(record_schema("Indexed", [field("index", { "type" => "map", "values" => "string" },
+                                                              default: { "key" => "value" })]))
+    schema.fields.first.default.freeze
+    cache = described_class.new
+    codec = cache.fetch(schema)
+    expect(cache.fetch(schema)).to equal(codec)
+    schema.fields.first.default.fetch("key").replace("changed")
+    expect(cache.fetch(schema)).not_to equal(codec)
+  end
+
+  it "shrinks write plans back to the limit once nested encodes release them" do
+    cache = described_class.new
+    schemas = Array.new(130) { reference_schema(record_schema("Held#{it}", [field("x", "long")])) }
+    encode = lambda do |index|
+      nested = Class.new(Hash) do
+        define_method(:key?) do |key|
+          encode.call(index + 1) if index < 129
+          super(key)
+        end
+      end
+      Avrocadabra::AvroTurf.with_codecs(cache) do
+        Avro::IO::DatumWriter.new(schemas[index])
+                             .write(nested.new.update("x" => 1), Avro::IO::BinaryEncoder.new(StringIO.new(+"".b)))
+      end
+    end
+    encode.call(0)
+    roots = ObjectSpace.reachable_objects_from(cache.instance_variable_get(:@plans))
+    expect(roots.count { it.is_a?(Avro::Schema::RecordSchema) }).to eq(128)
   end
 end

@@ -54,4 +54,10 @@ RSpec.describe Avrocadabra::Schema do
     io.close_read
     expect { schema.decode(io) }.to raise_error(IOError)
   end
+
+  it "reports a stream whose buffer is not a String as DecodeError" do
+    io = Class.new(StringIO) { def string = 42 }.new("x".b)
+    expect { native_schema("string").decode(io) }
+      .to raise_error(Avrocadabra::DecodeError, "no implicit conversion of Integer into String")
+  end
 end

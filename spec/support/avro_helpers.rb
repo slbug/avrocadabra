@@ -86,11 +86,19 @@ module AvroHelpers
     File.dirname($LOADED_FEATURES.find { it.end_with?("/avrocadabra.rb") })
   end
 
-  def ruby_subprocess(code, *)
-    Open3.capture3(RbConfig.ruby, "-I", avrocadabra_library, "-ravrocadabra", "-e", code, *)
+  def ruby_subprocess(code, *, coverage: true, preload: true)
+    flags = if coverage && ENV["COVERAGE"] == "true"
+              ["-I", File.expand_path("..", __dir__),
+               "-rsupport/subprocess_coverage"]
+            else
+              []
+            end
+    flags += ["-I", avrocadabra_library]
+    flags << "-ravrocadabra" if preload
+    Open3.capture3(RbConfig.ruby, *flags, "-e", code, *)
   end
 
-  def ruby_fixture(name, *)
-    ruby_subprocess(File.read(File.expand_path("../fixtures/#{name}", __dir__)), *)
+  def ruby_fixture(name, *, coverage: true)
+    ruby_subprocess(File.read(File.expand_path("../fixtures/#{name}", __dir__)), *, coverage:)
   end
 end

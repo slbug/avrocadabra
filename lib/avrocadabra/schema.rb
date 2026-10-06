@@ -17,7 +17,7 @@ module Avrocadabra
     end
 
     def encode(data, release_gvl: false)
-      @native.encode(data, release_gvl, nil)
+      @native.encode(data, release_gvl)
     rescue TypeError, ArgumentError, RangeError, EncodingError => e
       raise EncodeError, e.message
     end
