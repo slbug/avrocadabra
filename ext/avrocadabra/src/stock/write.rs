@@ -173,6 +173,8 @@ pub struct Writer<'a> {
     pub out: Vec<u8>,
     /// Bytes this datum put in the stream, Ruby's own writes included.
     written: usize,
+    /// Output of rolled-back union attempts, which still counts toward the bound.
+    discarded: usize,
     seen: Option<usize>,
     caps: Caps,
     groups: u8,
@@ -238,6 +240,7 @@ impl<'a> Writer<'a> {
             io_encoding,
             out: Vec::new(),
             written: 0,
+            discarded: 0,
             seen: None,
             caps,
             groups: bounds.groups,
@@ -329,7 +332,7 @@ impl<'a> Writer<'a> {
     }
 
     fn room(&self, size: usize) -> R<()> {
-        if self.written + self.out.len() + size > MAX_BYTES {
+        if self.written + self.discarded + self.out.len() + size > MAX_BYTES {
             return Err(Fail::Limit("encoded datum exceeds max_bytes"));
         }
         Ok(())
@@ -362,6 +365,7 @@ impl<'a> Writer<'a> {
 
     fn rollback(&mut self, mark: Mark) {
         debug_assert_eq!(mark.bytes, self.written);
+        self.discarded += self.out.len().saturating_sub(mark.out);
         self.out.truncate(mark.out);
         self.items = mark.items;
     }

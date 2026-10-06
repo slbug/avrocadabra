@@ -98,6 +98,23 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
     end
   end
 
+  it "counts discarded union attempts toward the byte bound" do
+    branch = lambda do |name, leaf|
+      record_schema(name, [field("s", "string"), field("inner", record_schema("#{name}Inner", [field("n", leaf)]))])
+    end
+    writer = Avro::IO::DatumWriter.new(reference_schema([branch.call("Longs", "long"), branch.call("Texts", "string")]))
+    cache = Avrocadabra::AvroTurf::Cache.new
+    write = lambda do |size|
+      Avrocadabra::AvroTurf.with_codecs(cache) do
+        datum = { "s" => "x" * size, "inner" => { "n" => "text" } }
+        writer.write(datum, Avro::IO::BinaryEncoder.new(StringIO.new(+"".b)))
+      end
+    end
+    write.call(1)
+    expect { write.call(9 * 1024 * 1024) }
+      .to raise_error(Avro::IO::AvroTypeError) { expect(it.cause.message).to eq("encoded datum exceeds max_bytes") }
+  end
+
   it "reports limits reached inside custom iterators as AvroTypeError" do
     stub_const("Avrocadabra::Schema::MAX_ITEMS", 5)
     custom = Class.new(Hash) { define_method(:each) { |&block| super(&block) } }

@@ -127,6 +127,16 @@ RSpec.describe Avrocadabra::Schema do
     expect(yielded).to be < 10
   end
 
+  it "counts discarded union attempts toward max_bytes" do
+    branch = lambda do |name, leaf|
+      record_schema(name, [field("s", "string"), field("inner", record_schema("#{name}Inner", [field("n", leaf)]))])
+    end
+    union = [branch.call("Longs", "long"), branch.call("Texts", "string")]
+    datum = { "s" => "x" * 60, "inner" => { "n" => "text" } }
+    expect(native_schema(union, max_bytes: 200).encode(datum).bytesize).to eq(67)
+    expect { native_schema(union, max_bytes: 100).encode(datum) }.to raise_error(Avrocadabra::EncodeError, /max_bytes/)
+  end
+
   it "enforces the datum byte limit on encode and decode" do
     schema = native_schema("bytes", max_bytes: 32)
     expect { schema.encode("x" * 33) }.to raise_error(Avrocadabra::EncodeError)

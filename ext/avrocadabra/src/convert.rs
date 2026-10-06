@@ -41,6 +41,7 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
         items: 0,
         work: 0,
         bytes: 0,
+        discarded: 0,
         logical: module.const_get("Logical")?,
         union,
         duration,
@@ -57,7 +58,7 @@ pub fn encode(ruby: &Ruby, core: &Core, value: Value, keys: RArray) -> Result<Ve
         core: Cell::new(None),
     };
     ctx.value(codec.schema, None, value, 0)?;
-    if ctx.out.len() > core.limits.max_bytes {
+    if ctx.overflowed() {
         return Err(error(
             ruby,
             "EncodeError",
@@ -193,6 +194,8 @@ struct Encoder<'a, 's> {
     items: usize,
     work: usize,
     bytes: usize,
+    /// Output of rejected union attempts, which still counts toward `max_bytes`.
+    discarded: usize,
     logical: RModule,
     union: RClass,
     duration: RClass,
@@ -316,16 +319,16 @@ impl Encoder<'_, '_> {
     }
 
     fn count_bytes(&mut self, n: usize) -> Result<(), Error> {
-        self.bytes = self
-            .bytes
-            .checked_add(n)
-            .filter(|&n| n <= self.limits.max_bytes)
-            .ok_or_else(|| self.fail("value exceeds max_bytes"))?;
+        self.bytes = self.bytes.saturating_add(n);
+        if self.bytes > self.limits.max_bytes {
+            return Err(self.fail("value exceeds max_bytes"));
+        }
         Ok(())
     }
 
     fn overflowed(&self) -> bool {
-        self.out.len() > self.limits.max_bytes
+        self.bytes > self.limits.max_bytes
+            || self.out.len() + self.discarded > self.limits.max_bytes
     }
 
     fn integer(&self, value: Value) -> Result<i64, Error> {
@@ -756,8 +759,7 @@ impl Encoder<'_, '_> {
                             .ok_or_else(|| self.fail(format!("unknown union branch {branch}")))?
                     }
                 } else {
-                    let (items, bytes, path_len, out_len) =
-                        (self.items, self.bytes, self.path.len(), self.out.len());
+                    let (items, path_len, out_len) = (self.items, self.path.len(), self.out.len());
                     let mut failure = None;
                     for (i, schema) in union.variants().iter().enumerate() {
                         if self.accepts(schema, ns, value)? {
@@ -772,9 +774,12 @@ impl Encoder<'_, '_> {
                                 }
                             }
                             self.items = items;
-                            self.bytes = bytes;
                             self.path.truncate(path_len);
+                            self.discarded += self.out.len().saturating_sub(out_len);
                             self.out.truncate(out_len);
+                            if self.overflowed() {
+                                return Err(self.fail("encoded datum exceeds max_bytes"));
+                            }
                         }
                     }
                     return Err(self.fail(

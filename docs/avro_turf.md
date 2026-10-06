@@ -44,7 +44,7 @@ The schema ID selects the writer; decode's `schema_name:` selects the reader. Me
 - UUID case stays unchanged. Unsupported Ruby Avro annotations retain physical values: fixed decimals, big-decimal and duration decode as strings. Standalone schemas have [additional mappings](../README.md#types).
 - Integer-to-floating promotions retain `Integer`; string/bytes promotions retain writer encoding. Maps retain insertion order.
 - Decode consumes one datum, leaving trailing bytes unread. Failed native reads preserve the cursor, including adapter failures.
-- Bounds: 16 MiB, 64 levels, 1,000,000 value/search nodes. Rejected union branches consume the work budget. `validate: true` retains Ruby Avro's rules and extra-field checks, with bounded recursive validation.
+- Bounds: 16 MiB, 64 levels, 1,000,000 value/search nodes. Rejected union branches consume the work and byte budgets; bytes Ruby Avro writes itself count too. `validate: true` retains Ruby Avro's rules and extra-field checks, with bounded recursive validation.
 
 Registry/framing errors stay in AvroTurf. Encode errors are Ruby Avro's own; bounds raise `Avro::IO::AvroTypeError` caused by `Avrocadabra::EncodeError`. Decode errors use Ruby Avro classes or `EOFError`; messages, malformed-input rejection and failure cursor behavior may differ. Bounds reject some inputs stock Avro accepts. Native failures never retry through Ruby.
 
