@@ -109,4 +109,19 @@ RSpec.describe Avrocadabra::AvroTurf::Messaging do
         .to raise_error(Avrocadabra::ResolutionError)
     end
   end
+
+  it "raises a buffered write failure before a later encoding failure, as Ruby Avro does" do
+    day = { "type" => "int", "logicalType" => "date" }
+    schema = reference_schema(record_schema("Closed", [field("count", "long"), field("day", day)]))
+    cache = Avrocadabra::AvroTurf::Cache.new
+    write = lambda do |datum, io|
+      Avrocadabra::AvroTurf.with_codecs(cache) do
+        Avro::IO::DatumWriter.new(schema).write(datum, Avro::IO::BinaryEncoder.new(io))
+      end
+    end
+    write.call({ "count" => 1, "day" => 3 }, StringIO.new(+"".b))
+    io = StringIO.new(+"".b)
+    closing = Hash.new { io.close_write || 1 }.merge("day" => Float::NAN)
+    expect { write.call(closing, io) }.to raise_error(IOError, "not opened for writing")
+  end
 end

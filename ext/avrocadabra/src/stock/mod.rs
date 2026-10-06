@@ -314,8 +314,10 @@ pub fn write(ruby: &Ruby, rb_self: Value, datum: Value, encoder: Value) -> Resul
     drop(writer);
     plans.release(plan);
     set_thread_local(&BUDGET, previous);
+    // Buffered bytes precede the failure: Ruby Avro would have hit their write error first.
+    flushed?;
     match result {
-        Ok(value) => flushed.map(|()| value),
+        Ok(value) => Ok(value),
         Err(Fail::Raise(error)) => Err(error),
         Err(Fail::Limit(message)) => {
             let class = world.avro_type_error;
